@@ -3,11 +3,16 @@ import AIChatCore
 
 /// Collapsible thinking/reasoning tile. Shows "Thinking…" with animation during generation,
 /// then "Thought for Xs" with expandable full content when done.
-struct ThinkingTileView: View {
-    let entry: ChatSession.ReasoningEntry
-    let onToggle: () -> Void
+public struct ThinkingTileView: View {
+    public let entry: ChatSession.ReasoningEntry
+    public let onToggle: () -> Void
 
-    var body: some View {
+    public init(entry: ChatSession.ReasoningEntry, onToggle: @escaping () -> Void) {
+        self.entry = entry
+        self.onToggle = onToggle
+    }
+
+    public var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             pillButton
             if entry.isExpanded && !entry.isThinking {

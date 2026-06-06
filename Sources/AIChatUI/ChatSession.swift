@@ -31,6 +31,7 @@ public final class ChatSession: ObservableObject {
     private var reasoningStart: Date?
     // Incremented on every startGeneration; lets finishGeneration detect if it was superseded.
     private var generationID: Int = 0
+    private var generationWasCancelled = false
 
     public init(
         provider: any ChatProvider,
@@ -44,25 +45,59 @@ public final class ChatSession: ObservableObject {
 
     // MARK: - Public API
 
-    public func send(_ text: String) {
+    public struct KnowledgeRetrievalInjection: Sendable {
+        public let query: String
+        public let body: String
+        public init(query: String, body: String) {
+            self.query = query
+            self.body = body
+        }
+    }
+
+    public func send(_ text: String, knowledge: KnowledgeRetrievalInjection? = nil) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, !isGenerating else { return }
 
-        let userMsg = ChatMessage(role: .user, content: trimmed)
-        history.append(userMsg)
-        entries.append(.userMessage(UserEntry(id: UUID(), text: trimmed)))
+        let userId = UUID()
+        entries.append(.userMessage(UserEntry(id: userId, text: trimmed)))
+
+        if let knowledge, !knowledge.body.isEmpty {
+            entries.append(.knowledgeRetrieval(KnowledgeRetrievalEntry(
+                id: UUID(),
+                query: knowledge.query,
+                body: knowledge.body
+            )))
+            let augmented = """
+            ## Retrieved Knowledge (automatic)
+
+            \(knowledge.body)
+
+            ## User Message
+
+            \(trimmed)
+            """
+            history.append(ChatMessage(id: userId, role: .user, content: augmented))
+        } else {
+            history.append(ChatMessage(id: userId, role: .user, content: trimmed))
+        }
 
         startGeneration()
     }
 
+    /// Programmatic tool call when the harness must execute a tool the model planned but did not emit.
+    public func requestToolCall(name: String, arguments: String) {
+        guard !isGenerating else { return }
+        let id = UUID().uuidString
+        let normalized = GemmaToolArguments.normalize(arguments)
+        addToolCallEntry(id: id, name: name, arguments: normalized)
+        appendAssistantToolCall(id: id, name: name, arguments: normalized)
+    }
+
     /// Append a tool result to history and continue the conversation.
-    public func submitToolResult(toolCallId: String, content: String) {
+    public func submitToolResult(toolCallId: String, content: String, isError: Bool = false) {
         let msg = ChatMessage(toolCallId: toolCallId, content: content)
         history.append(msg)
-
-        // Update the matching tool call entry to succeeded
-        updateToolCallStatus(id: toolCallId, status: .succeeded, result: content)
-
+        updateToolCallStatus(id: toolCallId, status: isError ? .failed : .succeeded, result: content)
         startGeneration()
     }
 
@@ -71,6 +106,16 @@ public final class ChatSession: ObservableObject {
         streamTask = nil
         isGenerating = false
         removeActivity()
+    }
+
+    public func toggleKnowledgeRetrieval(id: UUID) {
+        for i in entries.indices {
+            if case .knowledgeRetrieval(var e) = entries[i], e.id == id {
+                e.isExpanded.toggle()
+                entries[i] = .knowledgeRetrieval(e)
+                return
+            }
+        }
     }
 
     public func toggleThinking(id: UUID) {
@@ -85,8 +130,25 @@ public final class ChatSession: ObservableObject {
 
     public func clearHistory() {
         guard !isGenerating else { return }
+        streamTask?.cancel()
+        streamTask = nil
+        isGenerating = false
         entries = []
         history = []
+    }
+
+    /// Restore a persisted conversation into both display entries and provider history.
+    public func loadSnapshot(entries: [Entry], history: [ChatMessage]) {
+        streamTask?.cancel()
+        streamTask = nil
+        isGenerating = false
+        error = nil
+        activeReasoningId = nil
+        activeAIId = nil
+        reasoningStart = nil
+        textEmitter = nil
+        self.entries = entries
+        self.history = history
     }
 
     // MARK: - Private: generation lifecycle
@@ -103,6 +165,7 @@ public final class ChatSession: ObservableObject {
         let myGenerationID = generationID
 
         isGenerating = true
+        generationWasCancelled = false
         error = nil
         activeReasoningId = nil
         activeAIId = nil
@@ -145,6 +208,12 @@ public final class ChatSession: ObservableObject {
                 await emitter.wait()
             } catch is CancellationError {
                 await emitter.cancel()
+                await MainActor.run { [weak self] in
+                    guard let self else { return }
+                    if self.generationID == myGenerationID {
+                        self.generationWasCancelled = true
+                    }
+                }
             } catch {
                 await emitter.cancel()
                 await MainActor.run { [weak self] in
@@ -179,9 +248,9 @@ public final class ChatSession: ObservableObject {
 
         case .toolCallComplete(let id, let name, let args):
             removeActivity()
-            addToolCallEntry(id: id, name: name, arguments: args)
-            // Add the tool call to history as an assistant message
-            appendAssistantToolCall(id: id, name: name, arguments: args)
+            let normalized = GemmaToolArguments.normalize(args)
+            addToolCallEntry(id: id, name: name, arguments: normalized)
+            appendAssistantToolCall(id: id, name: name, arguments: normalized)
 
         case .usage:
             break
@@ -197,31 +266,73 @@ public final class ChatSession: ObservableObject {
             guard let self else { return }
             // If a newer generation started while we were finishing, don't touch shared state.
             guard self.generationID == generationID else { return }
+            if self.generationWasCancelled {
+                self.generationWasCancelled = false
+                self.removeActivity()
+                self.isGenerating = false
+                self.streamTask = nil
+                return
+            }
             // Mark reasoning entry as done (stops the thinking animation)
             if let rid = activeReasoningId {
                 finaliseReasoningEntry(id: rid)
             }
-            // Capture the complete assistant message into history
+            // Recover tool calls the model wrote as <tool_call> text (LoRA / training artifact).
             if let aid = activeAIId {
-                captureAssistantMessage(id: aid)
+                recoverEmbeddedToolCalls(fromAIEntryId: aid)
+                if let aid = activeAIId {
+                    captureAssistantMessage(id: aid)
+                }
             }
             removeActivity()
             // Surface any error inline (the top banner can be missed).
             let hasToolCalls = entries.contains { if case .toolCall = $0 { return true } else { return false } }
+            let hasReasoningContent = entries.contains {
+                if case .reasoning(let e) = $0 { return !e.text.isEmpty }
+                return false
+            }
             if let err = error, activeAIId == nil {
                 let msg = (err as? LocalizedError)?.errorDescription ?? err.localizedDescription
-                entries.append(.activity(ActivityEntry(id: UUID(), text: "⚠️ \(msg)")))
-            } else if error == nil && activeAIId == nil && activeReasoningId == nil && !hasToolCalls {
-                // Zero events and no tool calls — stream returned nothing useful.
-                // Almost always an invalid or missing API key silently returning a non-event response.
-                entries.append(.activity(ActivityEntry(id: UUID(), text: "⚠️ No response — check your API key in Settings (⌘,)")))
+                entries.append(.activity(ActivityEntry(id: UUID(), text: "⚠️ \(msg)", isError: true)))
+            } else if error == nil && activeAIId == nil && activeReasoningId == nil && !hasToolCalls && !hasReasoningContent {
+                entries.append(.activity(ActivityEntry(id: UUID(), text: "⚠️ \(provider.zeroResponseMessage)", isError: true)))
             }
-            isGenerating = false
-            streamTask = nil
+            let hasRunningTools = entries.contains {
+                if case .toolCall(let e) = $0 { return e.status == .running }
+                return false
+            }
+            isGenerating = hasRunningTools
+            if !hasRunningTools { streamTask = nil }
         }
     }
 
     // MARK: - Entry management helpers
+
+    private func recoverEmbeddedToolCalls(fromAIEntryId id: UUID) -> Bool {
+        guard let idx = entries.indices.first(where: {
+            if case .aiMessage(let e) = entries[$0], e.id == id { return true } else { return false }
+        }), case .aiMessage(var e) = entries[idx] else { return false }
+
+        let parsed = GemmaOutputRecovery.parse(from: e.text)
+        guard !parsed.calls.isEmpty else { return false }
+
+        e.text = parsed.cleanedText
+        e.isStreaming = false
+        if e.text.isEmpty {
+            entries.remove(at: idx)
+            activeAIId = nil
+        } else {
+            entries[idx] = .aiMessage(e)
+        }
+
+        for call in parsed.calls {
+            let toolId = UUID().uuidString
+            let normalized = GemmaToolArguments.normalize(call.arguments)
+            addToolCallEntry(id: toolId, name: call.name, arguments: normalized)
+            appendAssistantToolCall(id: toolId, name: call.name, arguments: normalized)
+        }
+        return true
+    }
 
     private func ensureAIEntry() {
         guard activeAIId == nil else { return }
@@ -367,6 +478,7 @@ public extension ChatSession {
         case reasoning(ReasoningEntry)
         case toolCall(ToolCallEntry)
         case activity(ActivityEntry)
+        case knowledgeRetrieval(KnowledgeRetrievalEntry)
 
         public var id: String {
             switch self {
@@ -375,6 +487,7 @@ public extension ChatSession {
             case .reasoning(let e):    "reasoning-\(e.id)"
             case .toolCall(let e):     "tool-\(e.id)"
             case .activity(let e):     "activity-\(e.id)"
+            case .knowledgeRetrieval(let e): "knowledge-\(e.id)"
             }
         }
     }
@@ -382,12 +495,23 @@ public extension ChatSession {
     struct UserEntry: Identifiable {
         public let id: UUID
         public var text: String
+
+        public init(id: UUID, text: String) {
+            self.id = id
+            self.text = text
+        }
     }
 
     struct AIEntry: Identifiable {
         public let id: UUID
         public var text: String
         public var isStreaming: Bool
+
+        public init(id: UUID, text: String, isStreaming: Bool) {
+            self.id = id
+            self.text = text
+            self.isStreaming = isStreaming
+        }
     }
 
     struct ReasoningEntry: Identifiable {
@@ -408,10 +532,33 @@ public extension ChatSession {
         public var result: String?
 
         public enum Status { case running, succeeded, failed }
+
+        public init(id: String, name: String, arguments: String, status: Status, result: String?) {
+            self.id = id
+            self.name = name
+            self.arguments = arguments
+            self.status = status
+            self.result = result
+        }
+    }
+
+    struct KnowledgeRetrievalEntry: Identifiable {
+        public let id: UUID
+        public var query: String
+        public var body: String
+        public var isExpanded: Bool = false
+
+        public init(id: UUID, query: String, body: String, isExpanded: Bool = false) {
+            self.id = id
+            self.query = query
+            self.body = body
+            self.isExpanded = isExpanded
+        }
     }
 
     struct ActivityEntry: Identifiable {
         public let id: UUID
         public var text: String
+        public var isError: Bool = false
     }
 }

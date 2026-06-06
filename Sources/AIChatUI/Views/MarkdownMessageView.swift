@@ -10,30 +10,7 @@ struct MarkdownMessageView: View {
         Markdown(text)
             .markdownCodeSyntaxHighlighter(SplashHighlighter.shared)
             .markdownTextStyle { FontSize(15) }
-            .markdownBlockStyle(\.codeBlock) { configuration in
-                VStack(alignment: .leading, spacing: 0) {
-                    if let lang = configuration.language {
-                        Text(lang)
-                            .font(.caption2.weight(.medium))
-                            .foregroundStyle(.secondary)
-                            .padding(.horizontal, 12)
-                            .padding(.top, 8)
-                    }
-                    configuration.label
-                        .relativeLineSpacing(.em(0.2))
-                        .markdownTextStyle {
-                            FontFamilyVariant(.monospaced)
-                            FontSize(.em(0.85))
-                        }
-                        .padding(12)
-                }
-                .background(.secondary.opacity(0.07))
-                .clipShape(.rect(cornerRadius: 8, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .stroke(.secondary.opacity(0.12), lineWidth: 1)
-                )
-            }
+            .markdownBlockStyle(\.codeBlock, body: codeBlock)
             .markdownBlockStyle(\.blockquote) { configuration in
                 HStack(spacing: 0) {
                     Rectangle()
@@ -46,9 +23,76 @@ struct MarkdownMessageView: View {
             }
             .textSelection(.enabled)
     }
+
+    @ViewBuilder
+    private func codeBlock(_ configuration: CodeBlockConfiguration) -> some View {
+        CodeBlockChrome(
+            language: configuration.language,
+            content: configuration.content,
+            label: configuration.label
+        )
+    }
 }
 
-// MARK: - Splash syntax highlighter
+private struct CodeBlockChrome: View {
+    let language: String?
+    let content: String
+    let label: CodeBlockConfiguration.Label
+    @State private var isHovering = false
+    @State private var didCopy = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                if let language, !language.isEmpty {
+                    Text(language)
+                        .font(.caption2.weight(.medium))
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 0)
+                Button(action: copyCode) {
+                    Image(systemName: didCopy ? "checkmark" : "doc.on.doc")
+                        .font(.caption2)
+                        .foregroundStyle(didCopy ? .green : .secondary)
+                }
+                .buttonStyle(.plain)
+                .help(didCopy ? "Copied" : "Copy code")
+                .opacity(isHovering || didCopy ? 1 : 0.35)
+            }
+            .padding(.horizontal, 12)
+            .padding(.top, 8)
+            .padding(.bottom, 4)
+
+            label
+                .relativeLineSpacing(.em(0.2))
+                .markdownTextStyle {
+                    FontFamilyVariant(.monospaced)
+                    FontSize(.em(0.85))
+                }
+                .padding(.horizontal, 12)
+                .padding(.bottom, 12)
+        }
+        .background(.secondary.opacity(0.07))
+        .clipShape(.rect(cornerRadius: 8, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(.secondary.opacity(0.12), lineWidth: 1)
+        )
+        .contextMenu {
+            Button("Copy Code") { copyCode() }
+        }
+        .onHover { isHovering = $0 }
+    }
+
+    private func copyCode() {
+        ChatClipboard.copy(content)
+        didCopy = true
+        Task {
+            try? await Task.sleep(for: .seconds(1.5))
+            await MainActor.run { didCopy = false }
+        }
+    }
+}
 
 final class SplashHighlighter: CodeSyntaxHighlighter {
     static let shared = SplashHighlighter()

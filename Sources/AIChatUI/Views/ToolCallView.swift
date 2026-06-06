@@ -2,11 +2,15 @@ import SwiftUI
 import AIChatCore
 
 /// Displays a tool call with status colour coding and expandable result.
-struct ToolCallView: View {
-    let entry: ChatSession.ToolCallEntry
+public struct ToolCallView: View {
+    public let entry: ChatSession.ToolCallEntry
     @State private var isExpanded = false
 
-    var body: some View {
+    public init(entry: ChatSession.ToolCallEntry) {
+        self.entry = entry
+    }
+
+    public var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             pill
             if isExpanded {

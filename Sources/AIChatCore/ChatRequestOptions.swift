@@ -26,6 +26,10 @@ public struct ChatRequestOptions: Sendable {
     public var systemPrompt: String?
     /// Additional HTTP headers merged into the request.
     public var extraHeaders: [String: String]?
+    /// Native tool specs for local-inference providers (MLX, llama.cpp).
+    /// Passed directly to the model's chat template as the `tools=` array.
+    /// API providers (OpenAI, Anthropic) use `tools: [ToolDefinition]` instead.
+    public var nativeToolSpecs: [[String: any Sendable]]?
 
     // MARK: - Local-inference sampling (llama.cpp / LlamaProvider)
     // These are ignored by HTTP-based providers (OpenAI, Anthropic).
@@ -58,6 +62,7 @@ public struct ChatRequestOptions: Sendable {
         streamUsage: Bool = true,
         systemPrompt: String? = nil,
         extraHeaders: [String: String]? = nil,
+        nativeToolSpecs: [[String: any Sendable]]? = nil,
         topK: Int? = nil,
         minP: Double? = nil,
         penaltyRepeat: Double? = nil,
@@ -75,6 +80,7 @@ public struct ChatRequestOptions: Sendable {
         self.streamUsage = streamUsage
         self.systemPrompt = systemPrompt
         self.extraHeaders = extraHeaders
+        self.nativeToolSpecs = nativeToolSpecs
         self.topK = topK
         self.minP = minP
         self.penaltyRepeat = penaltyRepeat
