@@ -1,13 +1,15 @@
 # AIChatKit
 
+[![](https://img.shields.io/endpoint?url=https%3A%2F%2Fswiftpackageindex.com%2Fapi%2Fpackages%2FNerdSnipe-Inc%2FAIChatKit%2Fbadge%3Ftype%3Dswift-versions)](https://swiftpackageindex.com/NerdSnipe-Inc/AIChatKit)
+[![](https://img.shields.io/endpoint?url=https%3A%2F%2Fswiftpackageindex.com%2Fapi%2Fpackages%2FNerdSnipe-Inc%2FAIChatKit%2Fbadge%3Ftype%3Dplatforms)](https://swiftpackageindex.com/NerdSnipe-Inc/AIChatKit)
+
 A Swift package that gives every app a single, unified chat interface across cloud and on-device AI providers. OpenAI, Anthropic, and Apple Intelligence all share the same protocol, message model, and optional SwiftUI components — swap providers with a one-line change.
 
 **Platforms:** macOS 14+ · iOS 17+  
 **Language:** Swift 5.10+
 
 For on-device inference, add a companion package:
-- **[AIChatKitLlama](https://github.com/NerdSnipe-Inc/AIChatKitLlama)** — llama.cpp GGUF models (broad device support)
-- **[AIChatKitMLX](https://github.com/NerdSnipe-Inc/AIChatKitMLX)** — Apple MLX models (Apple Silicon only)
+- **[AIChatKitMLX](https://github.com/NerdSnipe-Inc/AIChatKitMLX)** — Apple MLX models (Apple Silicon only, text + vision)
 
 ---
 
@@ -19,7 +21,7 @@ For on-device inference, add a companion package:
 | `AIChatOpenAI` | OpenAI-compatible provider (OpenAI, OpenRouter, llama-server, …) |
 | `AIChatAnthropic` | Anthropic Messages API with extended thinking support |
 | `AIChatFoundationModels` | Apple Intelligence on-device (macOS 26+ / iOS 26+) |
-| `AIChatUI` | `ChatSession` ViewModel + optional `ChatView` drop-in |
+| `AIChatUI` | `ChatSession` ViewModel + `MarkdownMessageView` + optional `ChatView` drop-in |
 
 ---
 
@@ -34,7 +36,7 @@ For on-device inference, add a companion package:
 .product(name: "AIChatOpenAI",           package: "AIChatKit"),
 .product(name: "AIChatAnthropic",        package: "AIChatKit"),
 .product(name: "AIChatFoundationModels", package: "AIChatKit"),
-.product(name: "AIChatUI",              package: "AIChatKit"),
+.product(name: "AIChatUI",               package: "AIChatKit"),
 ```
 
 ---
@@ -60,11 +62,12 @@ var body: some View {
     ScrollView {
         ForEach(session.entries) { entry in
             switch entry {
-            case .userMessage(let e):  MyUserBubble(text: e.text)
-            case .aiMessage(let e):    MyAssistantBubble(text: e.text, isStreaming: e.isStreaming)
-            case .reasoning(let e):    MyThinkingTile(entry: e)
-            case .toolCall(let e):     MyToolCallRow(entry: e)
-            case .activity(let e):     Text(e.text).foregroundStyle(.secondary)
+            case .userMessage(let e):   MyUserBubble(text: e.text)
+            case .aiMessage(let e):     MyAssistantBubble(text: e.text, isStreaming: e.isStreaming)
+            case .reasoning(let e):     MyThinkingTile(entry: e)
+            case .toolCall(let e):      MyToolCallRow(entry: e)
+            case .activity(let e):      Text(e.text).foregroundStyle(.secondary)
+            case .knowledgeRetrieval:   EmptyView()
             }
         }
     }
@@ -89,6 +92,46 @@ ChatView(session: ChatSession(
     provider: OpenAIProvider(apiKey: "sk-…"),
     model: "gpt-4o"
 ))
+```
+
+---
+
+## Markdown rendering
+
+`AIChatUI` exports `MarkdownMessageView` — a fully styled markdown renderer built on [swift-markdown-ui](https://github.com/gonzalezreal/swift-markdown-ui) and [Splash](https://github.com/JohnSundell/Splash). It handles fenced code blocks with syntax highlighting, a language label, and a copy button.
+
+```swift
+import AIChatUI
+
+// In a custom AI bubble:
+case .aiMessage(let e):
+    MarkdownMessageView(text: e.text)
+```
+
+Supports: headings, bold/italic, inline code, fenced code blocks (syntax-highlighted), blockquotes, lists, tables, links.
+
+---
+
+## Restoring saved conversations
+
+Use `loadSnapshot(entries:history:)` to restore a persisted conversation into both the display entries and provider history in a single call:
+
+```swift
+var snapshotEntries: [ChatSession.Entry] = []
+var snapshotHistory: [ChatMessage] = []
+
+for msg in storedMessages {
+    if msg.role == "user" {
+        snapshotEntries.append(.userMessage(ChatSession.UserEntry(id: msg.id, text: msg.content)))
+        snapshotHistory.append(ChatMessage(id: msg.id, role: .user, content: msg.content))
+    } else {
+        snapshotEntries.append(.aiMessage(ChatSession.AIEntry(id: msg.id, text: msg.content, isStreaming: false)))
+        snapshotHistory.append(ChatMessage(id: msg.id, role: .assistant, content: msg.content))
+    }
+}
+
+session.loadSnapshot(entries: snapshotEntries, history: snapshotHistory)
+// session.send() now has full history context
 ```
 
 ---
@@ -123,7 +166,7 @@ let provider = AnthropicProvider(apiKey: "sk-ant-…")
 ChatRequestOptions(maxTokens: 16000, thinkingBudget: 8000)
 ```
 
-### Apple Intelligence
+### Apple Intelligence (Foundation Models)
 
 ```swift
 import AIChatFoundationModels
@@ -132,6 +175,18 @@ import FoundationModels
 @available(macOS 26.0, iOS 26.0, *)
 guard case .available = SystemLanguageModel.default.availability else { return }
 let provider = FoundationModelsProvider()
+```
+
+Context window is **4,096 tokens** on-device. When the conversation exceeds this limit, `FoundationModelsProvider` surfaces `LanguageModelSession.GenerationError.exceededContextWindowSize`. Callers should catch this and either summarize history or switch to a higher-context provider (e.g. `MLXProvider` from AIChatKitMLX, or `PrivateCloudComputeLanguageModel` when it becomes available in the public SDK).
+
+```swift
+session.$error
+    .sink { error in
+        if let genError = error as? LanguageModelSession.GenerationError,
+           case .exceededContextWindowSize = genError {
+            // switch to higher-context provider and restore history
+        }
+    }
 ```
 
 ---

@@ -7,11 +7,8 @@ import FoundationModels
 /// Requires macOS 26.0+ or iOS 26.0+ with Apple Intelligence enabled on the device.
 /// Check `SystemLanguageModel.default.availability` before instantiating.
 ///
-/// Multi-turn conversation history is replayed into a fresh `LanguageModelSession` transcript
-/// on each call, which is the correct approach given that `ChatSession` sends the full history
-/// each time rather than maintaining a long-lived session.
-///
-/// The `model` parameter passed to `ChatSession` is ignored — the on-device model is fixed.
+/// Throws LanguageModelSession.GenerationError.exceededContextWindowSize when the conversation
+/// exceeds the model's context window. Callers should catch this and summarize/truncate history.
 @available(macOS 26.0, iOS 26.0, *)
 public struct FoundationModelsProvider: ChatProvider {
 
@@ -39,15 +36,13 @@ public struct FoundationModelsProvider: ChatProvider {
         model: String,
         options: ChatRequestOptions
     ) -> AsyncThrowingStream<ChatStreamEvent, Error> {
-        let llmModel      = self.model
-        let genOptions    = self.generationOptions
-        let systemPrompt  = options.systemPrompt
+        let llmModel     = self.model
+        let genOptions   = self.generationOptions
+        let systemPrompt = options.systemPrompt
 
         return AsyncThrowingStream { continuation in
             Task {
                 do {
-                    // The final user message becomes the Prompt; everything before it
-                    // is injected as a pre-built Transcript so the model has full context.
                     guard
                         let lastUserMessage = messages.last(where: { $0.role == .user }),
                         let lastUserText    = Self.extractText(from: lastUserMessage)
@@ -62,32 +57,22 @@ public struct FoundationModelsProvider: ChatProvider {
                         systemPrompt: systemPrompt
                     )
 
-                    let session = LanguageModelSession(
-                        model: llmModel,
-                        transcript: transcript
+                    let session = LanguageModelSession(model: llmModel, transcript: transcript)
+
+                    try await Self.performStream(
+                        session: session,
+                        prompt: lastUserText,
+                        genOptions: genOptions,
+                        continuation: continuation
                     )
-
-                    // ResponseStream<String> yields cumulative snapshots (not deltas).
-                    // Track the previous end index and emit only the new suffix each turn.
-                    var position: String.Index?
-                    for try await snapshot in session.streamResponse(
-                        to: Prompt(lastUserText),
-                        options: genOptions
-                    ) {
-                        try Task.checkCancellation()
-                        let start = position ?? snapshot.content.startIndex
-                        let delta = String(snapshot.content[start...])
-                        if !delta.isEmpty {
-                            continuation.yield(.text(delta))
-                        }
-                        position = snapshot.content.endIndex
-                    }
-
-                    continuation.yield(.done)
-                    continuation.finish()
                 } catch is CancellationError {
                     continuation.finish(throwing: ChatError.cancelled)
                 } catch {
+                    // LanguageModelSession.GenerationError.exceededContextWindowSize is handled
+                    // by the caller (AlricChatEngine) — it switches to MLXProvider with progress UI.
+                    // TODO: when PrivateCloudComputeLanguageModel ships in a public SDK build,
+                    //       catch exceededContextWindowSize here and escalate to PCC (32k context)
+                    //       before falling back to MLX. Check pcc.isAvailable before each call.
                     continuation.finish(throwing: error)
                 }
             }
@@ -110,6 +95,32 @@ public struct FoundationModelsProvider: ChatProvider {
             usage: nil,
             finishReason: .stop
         )
+    }
+
+    // MARK: - Stream helper
+
+    /// Drives a ResponseStream, emitting deltas, then `.done`, then finishing the continuation.
+    /// Extracted so both on-device and PCC paths share identical streaming logic.
+    private static func performStream(
+        session: LanguageModelSession,
+        prompt: String,
+        genOptions: GenerationOptions,
+        continuation: AsyncThrowingStream<ChatStreamEvent, Error>.Continuation
+    ) async throws {
+        // ResponseStream<String> yields cumulative snapshots (not deltas).
+        // Track the previous end index and emit only the new suffix each turn.
+        var position: String.Index?
+        for try await snapshot in session.streamResponse(to: Prompt(prompt), options: genOptions) {
+            try Task.checkCancellation()
+            let start = position ?? snapshot.content.startIndex
+            let delta = String(snapshot.content[start...])
+            if !delta.isEmpty {
+                continuation.yield(.text(delta))
+            }
+            position = snapshot.content.endIndex
+        }
+        continuation.yield(.done)
+        continuation.finish()
     }
 
     // MARK: - Transcript construction

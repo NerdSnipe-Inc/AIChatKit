@@ -3,10 +3,12 @@ import MarkdownUI
 import Splash
 
 /// Renders markdown with syntax-highlighted code blocks using swift-markdown-ui + Splash.
-struct MarkdownMessageView: View {
+public struct MarkdownMessageView: View {
     let text: String
 
-    var body: some View {
+    public init(text: String) { self.text = text }
+
+    public var body: some View {
         Markdown(text)
             .markdownCodeSyntaxHighlighter(SplashHighlighter.shared)
             .markdownTextStyle { FontSize(15) }
