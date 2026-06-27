@@ -1,0 +1,12 @@
+version: 1
+builder:
+  configs:
+    - platform: macos-spm
+      target: AIChatCore
+    - platform: linux
+      target: AIChatCore
+    - documentation_targets:
+        - AIChatCore
+        - AIChatOpenAI
+        - AIChatAnthropic
+        - AIChatUI
