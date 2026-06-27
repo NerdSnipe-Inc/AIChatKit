@@ -1,8 +1,13 @@
 import Foundation
 import AIChatCore
 
+/// Converts Anthropic streaming SSE payloads into normalized `ChatStreamEvent` values.
 public struct AnthropicStreamProcessor {
 
+    /// Processes Anthropic SSE events into AIChatKit stream events.
+    ///
+    /// - Parameter events: SSE events emitted by `SSEParser.events(from:)`.
+    /// - Returns: An async stream of normalized chat events.
     public static func process<S: AsyncSequence & Sendable>(
         events: S
     ) -> AsyncThrowingStream<ChatStreamEvent, Error> where S.Element == SSEParser.Event {

@@ -3,12 +3,22 @@ import AIChatCore
 
 /// ChatProvider for the Anthropic Messages API. Supports extended thinking and tool use.
 public struct AnthropicProvider: ChatProvider {
+    /// Stable provider identifier used by host applications.
     public let id: String
+    /// Human-readable provider name for settings and UI.
     public let name: String
 
     private let builder: AnthropicRequestBuilder
     private let session: URLSession
 
+    /// Creates an Anthropic Messages API provider.
+    ///
+    /// - Parameters:
+    ///   - apiKey: Anthropic API key sent as `x-api-key`.
+    ///   - endpoint: Optional endpoint override for proxies or compatible gateways.
+    ///   - id: Stable provider identifier.
+    ///   - name: Display name for UI surfaces.
+    ///   - session: URL session used to execute HTTP requests.
     public init(
         apiKey: String,
         endpoint: URL? = nil,
@@ -24,6 +34,13 @@ public struct AnthropicProvider: ChatProvider {
 
     // MARK: - Streaming
 
+    /// Starts a streaming Anthropic message request.
+    ///
+    /// - Parameters:
+    ///   - messages: Ordered conversation history.
+    ///   - model: Anthropic model identifier.
+    ///   - options: Shared request options.
+    /// - Returns: An async stream of normalized chat events.
     public func stream(
         messages: [ChatMessage],
         model: String,
@@ -71,6 +88,14 @@ public struct AnthropicProvider: ChatProvider {
 
     // MARK: - Non-streaming
 
+    /// Executes a non-streaming Anthropic message request.
+    ///
+    /// - Parameters:
+    ///   - messages: Ordered conversation history.
+    ///   - model: Anthropic model identifier.
+    ///   - options: Shared request options.
+    /// - Returns: A normalized completion result.
+    /// - Throws: `ChatError` for transport, API, or decoding failures.
     public func complete(
         messages: [ChatMessage],
         model: String,

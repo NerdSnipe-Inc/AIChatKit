@@ -9,14 +9,20 @@ public final class ChatSession: ObservableObject {
 
     // MARK: - Public state
 
+    /// Display entries rendered by `ConversationView`.
     @Published public var entries: [Entry] = []
+    /// Indicates whether the session is currently generating a response.
     @Published public var isGenerating: Bool = false
+    /// Last surfaced error for inline/banner presentation.
     @Published public var error: Error? = nil
 
     // MARK: - Configuration
 
+    /// Provider implementation handling requests for this session.
     public var provider: any ChatProvider
+    /// Active model identifier passed to `provider`.
     public var model: String
+    /// Request options used for each generation.
     public var options: ChatRequestOptions
 
     // MARK: - Private state
@@ -33,6 +39,12 @@ public final class ChatSession: ObservableObject {
     private var generationID: Int = 0
     private var generationWasCancelled = false
 
+    /// Creates a chat session view model.
+    ///
+    /// - Parameters:
+    ///   - provider: Backend provider implementation.
+    ///   - model: Model identifier understood by `provider`.
+    ///   - options: Shared request options for generation.
     public init(
         provider: any ChatProvider,
         model: String,
@@ -45,15 +57,31 @@ public final class ChatSession: ObservableObject {
 
     // MARK: - Public API
 
+    /// Optional retrieval context injected ahead of a user message.
     public struct KnowledgeRetrievalInjection: Sendable {
+        /// User query or retrieval label shown in UI.
         public let query: String
+        /// Retrieved context body injected into provider history.
         public let body: String
+        /// Creates retrieval context injected with a user message.
+        ///
+        /// - Parameters:
+        ///   - query: Retrieval query or label.
+        ///   - body: Retrieved knowledge text.
         public init(query: String, body: String) {
             self.query = query
             self.body = body
         }
     }
 
+    /// Sends a user message and starts generation.
+    ///
+    /// When `knowledge` is provided, retrieved context is rendered as a separate
+    /// entry and prepended to the provider-facing user message payload.
+    ///
+    /// - Parameters:
+    ///   - text: User-authored message text.
+    ///   - knowledge: Optional retrieval context to inject.
     public func send(_ text: String, knowledge: KnowledgeRetrievalInjection? = nil) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, !isGenerating else { return }
@@ -85,6 +113,10 @@ public final class ChatSession: ObservableObject {
     }
 
     /// Programmatic tool call when the harness must execute a tool the model planned but did not emit.
+    ///
+    /// - Parameters:
+    ///   - name: Tool/function name.
+    ///   - arguments: JSON-like argument payload to normalize and store.
     public func requestToolCall(name: String, arguments: String) {
         guard !isGenerating else { return }
         let id = UUID().uuidString
@@ -94,6 +126,11 @@ public final class ChatSession: ObservableObject {
     }
 
     /// Append a tool result to history and continue the conversation.
+    ///
+    /// - Parameters:
+    ///   - toolCallId: Identifier for the pending tool call.
+    ///   - content: Tool output content.
+    ///   - isError: Marks the tool call as failed when `true`.
     public func submitToolResult(toolCallId: String, content: String, isError: Bool = false) {
         let msg = ChatMessage(toolCallId: toolCallId, content: content)
         history.append(msg)
@@ -101,6 +138,7 @@ public final class ChatSession: ObservableObject {
         startGeneration()
     }
 
+    /// Cancels any active generation and clears transient activity indicators.
     public func cancel() {
         streamTask?.cancel()
         streamTask = nil
@@ -108,6 +146,9 @@ public final class ChatSession: ObservableObject {
         removeActivity()
     }
 
+    /// Toggles expansion for a knowledge-retrieval entry.
+    ///
+    /// - Parameter id: Identifier for the target retrieval entry.
     public func toggleKnowledgeRetrieval(id: UUID) {
         for i in entries.indices {
             if case .knowledgeRetrieval(var e) = entries[i], e.id == id {
@@ -118,6 +159,9 @@ public final class ChatSession: ObservableObject {
         }
     }
 
+    /// Toggles expansion for a reasoning/thinking entry.
+    ///
+    /// - Parameter id: Identifier for the target reasoning entry.
     public func toggleThinking(id: UUID) {
         for i in entries.indices {
             if case .reasoning(var e) = entries[i], e.id == id {
@@ -128,6 +172,7 @@ public final class ChatSession: ObservableObject {
         }
     }
 
+    /// Clears conversation entries and provider history when idle.
     public func clearHistory() {
         guard !isGenerating else { return }
         streamTask?.cancel()
@@ -138,6 +183,10 @@ public final class ChatSession: ObservableObject {
     }
 
     /// Restore a persisted conversation into both display entries and provider history.
+    ///
+    /// - Parameters:
+    ///   - entries: Display entries to restore.
+    ///   - history: Provider-facing message history to restore.
     public func loadSnapshot(entries: [Entry], history: [ChatMessage]) {
         streamTask?.cancel()
         streamTask = nil
@@ -472,6 +521,7 @@ public final class ChatSession: ObservableObject {
 
 public extension ChatSession {
 
+    /// Display model for timeline rows rendered by AIChatUI.
     enum Entry: Identifiable {
         case userMessage(UserEntry)
         case aiMessage(AIEntry)
@@ -480,6 +530,7 @@ public extension ChatSession {
         case activity(ActivityEntry)
         case knowledgeRetrieval(KnowledgeRetrievalEntry)
 
+        /// Stable row identifier used by SwiftUI lists.
         public var id: String {
             switch self {
             case .userMessage(let e):  "user-\(e.id)"
@@ -492,21 +543,39 @@ public extension ChatSession {
         }
     }
 
+    /// User-authored message row.
     struct UserEntry: Identifiable {
+        /// Stable identifier for this row.
         public let id: UUID
+        /// User message text.
         public var text: String
 
+        /// Creates a user-message entry.
+        ///
+        /// - Parameters:
+        ///   - id: Stable row identifier.
+        ///   - text: User message text.
         public init(id: UUID, text: String) {
             self.id = id
             self.text = text
         }
     }
 
+    /// Assistant message row.
     struct AIEntry: Identifiable {
+        /// Stable identifier for this row.
         public let id: UUID
+        /// Assistant text content.
         public var text: String
+        /// Indicates whether this row is still receiving stream deltas.
         public var isStreaming: Bool
 
+        /// Creates an assistant-message entry.
+        ///
+        /// - Parameters:
+        ///   - id: Stable row identifier.
+        ///   - text: Assistant message text.
+        ///   - isStreaming: Streaming state for UI affordances.
         public init(id: UUID, text: String, isStreaming: Bool) {
             self.id = id
             self.text = text
@@ -514,25 +583,46 @@ public extension ChatSession {
         }
     }
 
+    /// Model reasoning row shown before or alongside assistant output.
     struct ReasoningEntry: Identifiable {
+        /// Stable identifier for this row.
         public let id: UUID
+        /// Reasoning text content.
         public var text: String
+        /// Duration in seconds for the completed reasoning phase.
         public var duration: TimeInterval
+        /// Whether the row is expanded in UI.
         public var isExpanded: Bool
+        /// Whether the model is still actively reasoning.
         public var isThinking: Bool
         /// Anthropic thinking signature — preserved for multi-turn round-tripping.
         public var thinkingSignature: String?
     }
 
+    /// Tool invocation row with execution status and optional result.
     struct ToolCallEntry: Identifiable {
+        /// Provider-generated tool call identifier.
         public let id: String
+        /// Tool/function name.
         public var name: String
+        /// Normalized JSON tool arguments.
         public var arguments: String
+        /// Current execution status.
         public var status: Status
+        /// Optional tool result text.
         public var result: String?
 
+        /// Status lifecycle for a tool call.
         public enum Status { case running, succeeded, failed }
 
+        /// Creates a tool-call entry.
+        ///
+        /// - Parameters:
+        ///   - id: Tool call identifier.
+        ///   - name: Tool/function name.
+        ///   - arguments: JSON argument payload.
+        ///   - status: Initial execution status.
+        ///   - result: Optional initial result text.
         public init(id: String, name: String, arguments: String, status: Status, result: String?) {
             self.id = id
             self.name = name
@@ -542,12 +632,24 @@ public extension ChatSession {
         }
     }
 
+    /// Retrieval context row rendered when external knowledge is injected.
     struct KnowledgeRetrievalEntry: Identifiable {
+        /// Stable identifier for this row.
         public let id: UUID
+        /// Retrieval query or label.
         public var query: String
+        /// Retrieved context body.
         public var body: String
+        /// Whether the body is expanded in UI.
         public var isExpanded: Bool = false
 
+        /// Creates a knowledge-retrieval entry.
+        ///
+        /// - Parameters:
+        ///   - id: Stable row identifier.
+        ///   - query: Retrieval query or label.
+        ///   - body: Retrieved context content.
+        ///   - isExpanded: Initial expansion state.
         public init(id: UUID, query: String, body: String, isExpanded: Bool = false) {
             self.id = id
             self.query = query
@@ -556,9 +658,13 @@ public extension ChatSession {
         }
     }
 
+    /// Transient activity row for thinking and inline errors.
     struct ActivityEntry: Identifiable {
+        /// Stable identifier for this row.
         public let id: UUID
+        /// Activity text shown to the user.
         public var text: String
+        /// Whether the activity represents an error.
         public var isError: Bool = false
     }
 }

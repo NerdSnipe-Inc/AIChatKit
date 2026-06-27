@@ -11,12 +11,17 @@ import AIChatCore
 /// ChatView(session: session)
 /// ```
 public struct ChatView: View {
+    /// Session view model that drives conversation rendering and actions.
     @ObservedObject public var session: ChatSession
 
+    /// Creates a chat view bound to a session.
+    ///
+    /// - Parameter session: Session view model backing the UI.
     public init(session: ChatSession) {
         self.session = session
     }
 
+    /// The composed chat interface with conversation, composer, and error banner.
     public var body: some View {
         VStack(spacing: 0) {
             ConversationView(session: session)

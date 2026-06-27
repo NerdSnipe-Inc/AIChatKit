@@ -3,12 +3,19 @@ import AIChatCore
 
 /// ChatProvider for OpenAI and any OpenAI-compatible server (llama.cpp, OpenRouter, Groq, etc.).
 public struct OpenAIProvider: ChatProvider {
+    /// Stable provider identifier used by host applications.
     public let id: String
+    /// Human-readable provider name for settings and UI.
     public let name: String
 
     private let builder: OpenAIRequestBuilder
     private let session: URLSession
 
+    /// Creates an OpenAI-compatible provider.
+    ///
+    /// Configure `endpoint` to target compatible APIs such as OpenRouter, Groq,
+    /// local `llama.cpp`, or other OpenAI wire-compatible servers.
+    ///
     /// - Parameters:
     ///   - apiKey: API key. Pass `""` for llama.cpp and other unauthenticated servers.
     ///   - endpoint: Full URL including path. Defaults to OpenAI's chat completions endpoint.
@@ -35,6 +42,13 @@ public struct OpenAIProvider: ChatProvider {
 
     // MARK: - Streaming
 
+    /// Starts a streaming chat request and emits normalized stream events.
+    ///
+    /// - Parameters:
+    ///   - messages: Ordered conversation history.
+    ///   - model: Provider model identifier.
+    ///   - options: Request options mapped into OpenAI-compatible fields.
+    /// - Returns: An event stream for text, tool calls, usage, and completion.
     public func stream(
         messages: [ChatMessage],
         model: String,
@@ -69,6 +83,14 @@ public struct OpenAIProvider: ChatProvider {
 
     // MARK: - Non-streaming
 
+    /// Executes a non-streaming chat completion request.
+    ///
+    /// - Parameters:
+    ///   - messages: Ordered conversation history.
+    ///   - model: Provider model identifier.
+    ///   - options: Request options mapped into OpenAI-compatible fields.
+    /// - Returns: A normalized completion result.
+    /// - Throws: `ChatError` when request, decoding, or API validation fails.
     public func complete(
         messages: [ChatMessage],
         model: String,

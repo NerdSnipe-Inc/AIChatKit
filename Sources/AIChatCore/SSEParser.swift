@@ -6,9 +6,13 @@ import Foundation
 /// fields are separated by `:`, events are delimited by blank lines, `[DONE]` terminates the stream.
 public struct SSEParser {
 
+    /// A parsed Server-Sent Events frame.
     public struct Event: Sendable {
+        /// Optional SSE `id` field. Persists across events per spec.
         public let id: String?
+        /// Optional SSE `event` field.
         public let type: String?
+        /// Concatenated payload from one or more `data:` lines.
         public let data: String
     }
 

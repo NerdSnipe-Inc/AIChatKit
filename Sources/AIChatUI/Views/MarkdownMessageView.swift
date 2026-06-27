@@ -4,10 +4,15 @@ import Splash
 
 /// Renders markdown with syntax-highlighted code blocks using swift-markdown-ui + Splash.
 public struct MarkdownMessageView: View {
+    /// Markdown text rendered by this view.
     let text: String
 
+    /// Creates a markdown message view.
+    ///
+    /// - Parameter text: Markdown content to render.
     public init(text: String) { self.text = text }
 
+    /// Rendered markdown body with code-block theming and selection enabled.
     public var body: some View {
         Markdown(text)
             .markdownCodeSyntaxHighlighter(SplashHighlighter.shared)

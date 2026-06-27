@@ -1,13 +1,19 @@
 import SwiftUI
 import AIChatCore
 
+/// Scrollable conversation timeline bound to a `ChatSession`.
 public struct ConversationView: View {
+    /// Session backing the rendered conversation entries.
     @ObservedObject public var session: ChatSession
 
+    /// Creates a conversation view bound to a session.
+    ///
+    /// - Parameter session: Session view model that provides timeline entries.
     public init(session: ChatSession) {
         self.session = session
     }
 
+    /// Conversation list body with automatic scroll-to-bottom behavior.
     public var body: some View {
         ScrollViewReader { proxy in
             ScrollView {

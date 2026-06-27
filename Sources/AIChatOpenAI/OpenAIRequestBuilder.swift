@@ -1,17 +1,36 @@
 import Foundation
 import AIChatCore
 
+/// Builds OpenAI-compatible `URLRequest` values from AIChatKit chat inputs.
+///
+/// This type centralizes wire-format mapping so provider logic can focus on request
+/// execution and stream processing.
 public struct OpenAIRequestBuilder: Sendable {
     private let endpoint: URL
     private let apiKey: String
     private let streamUsage: Bool
 
+    /// Creates a request builder for an OpenAI-compatible endpoint.
+    ///
+    /// - Parameters:
+    ///   - endpoint: Full chat-completions endpoint URL.
+    ///   - apiKey: Bearer token value (empty for unauthenticated local servers).
+    ///   - streamUsage: Whether to include `stream_options.include_usage`.
     public init(endpoint: URL, apiKey: String, streamUsage: Bool = true) {
         self.endpoint = endpoint
         self.apiKey = apiKey
         self.streamUsage = streamUsage
     }
 
+    /// Builds a chat-completions HTTP request.
+    ///
+    /// - Parameters:
+    ///   - messages: Ordered conversation messages.
+    ///   - model: Target model identifier.
+    ///   - options: Shared request options.
+    ///   - stream: Whether to request a streaming response.
+    /// - Returns: A configured `POST` request ready for `URLSession`.
+    /// - Throws: Encoding errors for invalid payloads.
     public func buildRequest(
         messages: [ChatMessage],
         model: String,

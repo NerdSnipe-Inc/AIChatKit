@@ -12,7 +12,9 @@ import FoundationModels
 @available(macOS 26.0, iOS 26.0, *)
 public struct FoundationModelsProvider: ChatProvider {
 
+    /// Stable provider identifier used by host applications.
     public let id   = "foundation-models"
+    /// Human-readable provider name for settings and UI.
     public let name = "Apple Intelligence"
 
     private let model: SystemLanguageModel
@@ -31,6 +33,13 @@ public struct FoundationModelsProvider: ChatProvider {
 
     // MARK: - ChatProvider
 
+    /// Starts a streaming response using Apple Foundation Models.
+    ///
+    /// - Parameters:
+    ///   - messages: Ordered conversation history.
+    ///   - model: Unused for this provider; included for `ChatProvider` conformance.
+    ///   - options: Shared request options. `systemPrompt` is mapped into transcript instructions.
+    /// - Returns: An async stream of normalized chat events.
     public func stream(
         messages: [ChatMessage],
         model: String,
@@ -79,6 +88,14 @@ public struct FoundationModelsProvider: ChatProvider {
         }
     }
 
+    /// Executes a non-streaming completion by collecting streamed text deltas.
+    ///
+    /// - Parameters:
+    ///   - messages: Ordered conversation history.
+    ///   - model: Unused for this provider; included for protocol conformance.
+    ///   - options: Shared request options.
+    /// - Returns: A normalized completion result.
+    /// - Throws: Generation or cancellation errors from Foundation Models APIs.
     public func complete(
         messages: [ChatMessage],
         model: String,

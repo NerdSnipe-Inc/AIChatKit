@@ -8,6 +8,11 @@ public enum GemmaOutputRecovery {
     ///   2. `<tool_call>{JSON}</tool_call>` XML blocks
     ///   3. ` ```tool_code\nname(args)\n``` ` Python blocks (Gemma 4 Jinja fallback)
     /// `toolSchemas` — optional OpenAI-style spec array for resolving positional Python args.
+    ///
+    /// - Parameters:
+    ///   - text: Assistant text to parse.
+    ///   - toolSchemas: Optional tool schema metadata for positional argument recovery.
+    /// - Returns: Cleaned assistant text and recovered tool calls.
     public static func parse(
         from text: String,
         toolSchemas: [[String: Any]]? = nil
@@ -35,6 +40,10 @@ public enum GemmaOutputRecovery {
         )
     }
 
+    /// Removes Gemma channel markup tokens leaked into assistant-visible text.
+    ///
+    /// - Parameter text: Raw model output.
+    /// - Returns: Text with control tokens removed and whitespace trimmed.
     public static func stripChannelMarkup(_ text: String) -> String {
         var s = text
         s = s.replacingOccurrences(of: "<|channel>thought", with: "")

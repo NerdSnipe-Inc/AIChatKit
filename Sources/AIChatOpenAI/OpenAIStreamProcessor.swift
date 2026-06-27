@@ -4,6 +4,10 @@ import AIChatCore
 /// Converts a stream of SSE events from an OpenAI-compatible endpoint into `ChatStreamEvent` values.
 public struct OpenAIStreamProcessor {
 
+    /// Converts OpenAI SSE payloads into normalized `ChatStreamEvent` values.
+    ///
+    /// - Parameter events: SSE events emitted by `SSEParser.events(from:)`.
+    /// - Returns: An async stream of normalized chat events.
     public static func process<S: AsyncSequence & Sendable>(
         events: S
     ) -> AsyncThrowingStream<ChatStreamEvent, Error> where S.Element == SSEParser.Event {

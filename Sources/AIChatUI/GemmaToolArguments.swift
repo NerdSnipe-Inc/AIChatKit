@@ -4,6 +4,9 @@ import Foundation
 public enum GemmaToolArguments {
 
     /// Returns valid JSON for tool execution, converting Gemma `call:name{key:<|"|>value<|"|>}` when needed.
+    ///
+    /// - Parameter raw: Raw argument payload produced by the model.
+    /// - Returns: A normalized JSON object string.
     public static func normalize(_ raw: String) -> String {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return "{}" }

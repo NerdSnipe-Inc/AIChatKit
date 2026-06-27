@@ -1,7 +1,10 @@
 import Foundation
 import JSONSchema
 
-/// Options shared by all providers. Each provider uses what it supports and ignores the rest.
+/// Options shared by all providers.
+///
+/// Each provider reads the subset it supports and ignores unsupported fields. This
+/// keeps call sites provider-agnostic while still exposing backend-specific tuning knobs.
 public struct ChatRequestOptions: Sendable {
     /// Max tokens to generate. Maps to `max_tokens` for OpenAI/llama.cpp.
     public var maxTokens: Int?
@@ -50,6 +53,26 @@ public struct ChatRequestOptions: Sendable {
     /// Default used by `LlamaProvider`: 0.0.
     public var penaltyPresent: Double?
 
+    /// Creates a provider-agnostic options payload for chat generation.
+    ///
+    /// - Parameters:
+    ///   - maxTokens: Maximum completion tokens.
+    ///   - temperature: Sampling temperature.
+    ///   - topP: Nucleus sampling probability mass.
+    ///   - stop: Stop sequences.
+    ///   - tools: Tool definitions exposed to the model.
+    ///   - toolChoice: Tool call policy for the model.
+    ///   - reasoningEffort: OpenAI reasoning effort level.
+    ///   - thinkingBudget: Anthropic extended-thinking token budget.
+    ///   - streamUsage: Whether to request usage chunks in streaming mode.
+    ///   - systemPrompt: Optional top-level system prompt.
+    ///   - extraHeaders: Additional request headers merged into provider requests.
+    ///   - nativeToolSpecs: Native tool specs for local providers.
+    ///   - topK: Top-k sampling configuration for local inference.
+    ///   - minP: Min-p sampling configuration for local inference.
+    ///   - penaltyRepeat: Repetition penalty for local inference.
+    ///   - penaltyFreq: Frequency penalty for local inference.
+    ///   - penaltyPresent: Presence penalty for local inference.
     public init(
         maxTokens: Int? = nil,
         temperature: Double? = nil,
@@ -93,12 +116,24 @@ public struct ChatRequestOptions: Sendable {
 
 public extension ChatRequestOptions {
 
+    /// A tool definition surfaced to model APIs that support tool/function calling.
     struct ToolDefinition: Sendable, Encodable {
+        /// Tool/function identifier exposed to the model.
         public let name: String
+        /// Natural-language guidance used by the model for tool selection.
         public let description: String?
+        /// JSON schema for the tool input object.
         public let parameters: JSONSchema?
+        /// Optional strict-schema flag for compatible providers.
         public let strict: Bool?
 
+        /// Creates a tool definition for provider tool-calling APIs.
+        ///
+        /// - Parameters:
+        ///   - name: Tool/function identifier.
+        ///   - description: Human-readable tool description.
+        ///   - parameters: JSON schema describing the tool arguments.
+        ///   - strict: Whether schema adherence is required by the provider.
         public init(name: String, description: String? = nil, parameters: JSONSchema? = nil, strict: Bool? = nil) {
             self.name = name
             self.description = description
@@ -107,10 +142,15 @@ public extension ChatRequestOptions {
         }
     }
 
+    /// Controls how the provider may select tools for a completion.
     enum ToolChoiceOption: Sendable {
+        /// Disables tool invocation for this request.
         case none
+        /// Lets the model decide whether to call a tool.
         case auto
+        /// Requires at least one tool invocation.
         case required
+        /// Forces a call to a specific function name.
         case function(String)
     }
 }
@@ -118,20 +158,39 @@ public extension ChatRequestOptions {
 // MARK: - ChatCompletionResult
 
 public struct ChatCompletionResult: Sendable {
+    /// Provider response identifier, when supplied.
     public let id: String?
+    /// Model identifier that produced the completion.
     public let model: String
+    /// Final assistant message content.
     public let message: ChatMessage
+    /// Optional token usage payload.
     public let usage: TokenUsage?
+    /// Provider-normalized finish reason.
     public let finishReason: FinishReason
 
+    /// Normalized stop reason for non-streaming completions.
     public enum FinishReason: Sendable {
+        /// Model reached a natural stopping point.
         case stop
+        /// Model stopped due to token limit.
         case length
+        /// Model ended to hand back one or more tool calls.
         case toolCalls
+        /// Provider content policy filter interrupted generation.
         case contentFilter
+        /// Provider-specific stop reason not covered by known cases.
         case unknown(String)
     }
 
+    /// Creates a normalized non-streaming completion result.
+    ///
+    /// - Parameters:
+    ///   - id: Provider response identifier.
+    ///   - model: Model identifier used for the completion.
+    ///   - message: Final assistant message payload.
+    ///   - usage: Optional token usage metadata.
+    ///   - finishReason: Provider-normalized completion stop reason.
     public init(id: String?, model: String, message: ChatMessage, usage: TokenUsage?, finishReason: FinishReason) {
         self.id = id
         self.model = model

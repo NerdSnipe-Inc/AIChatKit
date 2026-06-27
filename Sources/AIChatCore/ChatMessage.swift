@@ -2,23 +2,39 @@ import Foundation
 
 /// A message in a conversation. Works with OpenAI, Anthropic, and any compatible provider.
 public struct ChatMessage: Codable, Sendable, Identifiable {
+    /// Stable client-side identifier for the message.
     public let id: UUID
+    /// Sender role for this message.
     public let role: Role
+    /// Ordered content blocks that compose the message payload.
     public var content: [ContentBlock]
     /// Present when `role == .tool` — the ID of the tool call being answered.
     public let toolCallId: String?
     /// Present on assistant messages that contain tool calls.
     public let toolCalls: [ToolCallBlock]?
 
+    /// Supported message roles across AIChatKit providers.
     public enum Role: String, Codable, Sendable {
+        /// High-priority system instruction content.
         case system
+        /// End-user authored content.
         case user
+        /// Assistant model response content.
         case assistant
+        /// Tool execution result content.
         case tool
     }
 
     // MARK: - Init
 
+    /// Creates a message with explicit role and content blocks.
+    ///
+    /// - Parameters:
+    ///   - id: Stable message identifier. Defaults to a new UUID.
+    ///   - role: Sender role for the message.
+    ///   - content: Ordered content blocks.
+    ///   - toolCallId: Tool call identifier when replying as `.tool`.
+    ///   - toolCalls: Tool calls emitted by assistant responses.
     public init(
         id: UUID = UUID(),
         role: Role,
@@ -33,17 +49,30 @@ public struct ChatMessage: Codable, Sendable, Identifiable {
         self.toolCalls = toolCalls
     }
 
-    /// Convenience: single text content.
+    /// Creates a message from a single text block.
+    ///
+    /// - Parameters:
+    ///   - id: Stable message identifier. Defaults to a new UUID.
+    ///   - role: Sender role for the message.
+    ///   - content: Plain text payload.
     public init(id: UUID = UUID(), role: Role, content: String) {
         self.init(id: id, role: role, content: [.text(content)])
     }
 
-    /// Convenience: tool result message.
+    /// Creates a tool-result message.
+    ///
+    /// - Parameters:
+    ///   - id: Stable message identifier. Defaults to a new UUID.
+    ///   - toolCallId: Tool call identifier being answered.
+    ///   - content: Tool result text content.
     public init(id: UUID = UUID(), toolCallId: String, content: String) {
         self.init(id: id, role: .tool, content: [.text(content)], toolCallId: toolCallId)
     }
 
-    /// Convenience: system message.
+    /// Creates a system message helper.
+    ///
+    /// - Parameter text: System instruction content.
+    /// - Returns: A `.system` chat message.
     public static func system(_ text: String) -> ChatMessage {
         ChatMessage(role: .system, content: text)
     }
@@ -89,12 +118,19 @@ public struct ChatMessage: Codable, Sendable, Identifiable {
 
 public extension ChatMessage {
 
+    /// Provider-agnostic content blocks supported by AIChatKit.
     enum ContentBlock: Codable, Sendable {
+        /// Plain text content.
         case text(String)
+        /// Image reference content.
         case image(ImageContent)
+        /// Assistant-issued tool call.
         case toolCall(ToolCallBlock)
+        /// Tool execution result payload.
         case toolResult(ToolResultBlock)
+        /// Non-user-visible model reasoning content.
         case thinking(ThinkingBlock)
+        /// Opaque encrypted/redacted thinking payload.
         case redactedThinking(String)
 
         private enum BlockType: String, Codable {
@@ -144,11 +180,21 @@ public extension ChatMessage {
         }
     }
 
+    /// Image content payload used in multimodal requests.
     struct ImageContent: Codable, Sendable {
+        /// Remote URL for image input.
         public let url: String?
+        /// MIME media type for inline base64 image data.
         public let mediaType: String?
+        /// Base64-encoded image bytes for inline image payloads.
         public let base64Data: String?
 
+        /// Creates image content for a URL or inline base64 payload.
+        ///
+        /// - Parameters:
+        ///   - url: Remote image URL.
+        ///   - mediaType: MIME media type for inline data.
+        ///   - base64Data: Base64 image bytes when sending inline.
         public init(url: String? = nil, mediaType: String? = nil, base64Data: String? = nil) {
             self.url = url
             self.mediaType = mediaType
@@ -156,11 +202,21 @@ public extension ChatMessage {
         }
     }
 
+    /// Tool invocation requested by the assistant.
     struct ToolCallBlock: Codable, Sendable {
+        /// Provider-generated tool call identifier.
         public let id: String
+        /// Tool/function name to execute.
         public let name: String
+        /// JSON-encoded tool arguments.
         public var arguments: String
 
+        /// Creates a normalized tool-call block.
+        ///
+        /// - Parameters:
+        ///   - id: Tool call identifier.
+        ///   - name: Tool/function name.
+        ///   - arguments: JSON-encoded argument object.
         public init(id: String, name: String, arguments: String) {
             self.id = id
             self.name = name
@@ -168,11 +224,21 @@ public extension ChatMessage {
         }
     }
 
+    /// Tool execution output sent back to the model.
     struct ToolResultBlock: Codable, Sendable {
+        /// Tool call identifier this result belongs to.
         public let toolCallId: String
+        /// Tool result content, typically plain text or serialized JSON.
         public let content: String
+        /// Indicates whether the tool execution failed.
         public var isError: Bool
 
+        /// Creates a tool-result block.
+        ///
+        /// - Parameters:
+        ///   - toolCallId: Tool call identifier being answered.
+        ///   - content: Tool result payload.
+        ///   - isError: Indicates failure output when `true`.
         public init(toolCallId: String, content: String, isError: Bool = false) {
             self.toolCallId = toolCallId
             self.content = content
@@ -180,10 +246,18 @@ public extension ChatMessage {
         }
     }
 
+    /// Anthropic-compatible thinking block that can be round-tripped.
     struct ThinkingBlock: Codable, Sendable {
+        /// Model reasoning text content.
         public var text: String
+        /// Optional signature required for Anthropic thinking replay.
         public var signature: String?
 
+        /// Creates a thinking content block.
+        ///
+        /// - Parameters:
+        ///   - text: Model reasoning text.
+        ///   - signature: Optional provider signature for replay.
         public init(text: String, signature: String? = nil) {
             self.text = text
             self.signature = signature

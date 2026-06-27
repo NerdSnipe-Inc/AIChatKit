@@ -1,6 +1,10 @@
 import Foundation
 import AIChatCore
 
+/// Builds Anthropic Messages API requests from provider-agnostic chat inputs.
+///
+/// The builder handles Anthropic-specific message shaping, including system block
+/// extraction, tool mapping, and optional extended-thinking configuration.
 public struct AnthropicRequestBuilder: Sendable {
     private static let defaultEndpoint = URL(string: "https://api.anthropic.com/v1/messages")!
     private static let apiVersion = "2023-06-01"
@@ -8,11 +12,25 @@ public struct AnthropicRequestBuilder: Sendable {
     private let endpoint: URL
     private let apiKey: String
 
+    /// Creates a request builder for the Anthropic Messages API.
+    ///
+    /// - Parameters:
+    ///   - apiKey: Anthropic API key value.
+    ///   - endpoint: Optional endpoint override. Defaults to Anthropic production.
     public init(apiKey: String, endpoint: URL? = nil) {
         self.apiKey = apiKey
         self.endpoint = endpoint ?? Self.defaultEndpoint
     }
 
+    /// Builds a Messages API HTTP request.
+    ///
+    /// - Parameters:
+    ///   - messages: Ordered conversation history.
+    ///   - model: Target Anthropic model identifier.
+    ///   - options: Shared request options.
+    ///   - stream: Whether to request server-sent event streaming.
+    /// - Returns: A configured `POST` request.
+    /// - Throws: Encoding errors for invalid request payloads.
     public func buildRequest(
         messages: [ChatMessage],
         model: String,

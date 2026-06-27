@@ -4,14 +4,22 @@ import AIChatCore
 /// Collapsible thinking/reasoning tile. Shows "Thinking…" with animation during generation,
 /// then "Thought for Xs" with expandable full content when done.
 public struct ThinkingTileView: View {
+    /// Reasoning entry rendered by this tile.
     public let entry: ChatSession.ReasoningEntry
+    /// Callback invoked when the tile expansion toggles.
     public let onToggle: () -> Void
 
+    /// Creates a reasoning tile.
+    ///
+    /// - Parameters:
+    ///   - entry: Reasoning entry to display.
+    ///   - onToggle: Expansion toggle handler.
     public init(entry: ChatSession.ReasoningEntry, onToggle: @escaping () -> Void) {
         self.entry = entry
         self.onToggle = onToggle
     }
 
+    /// Tile body with compact pill and optional expanded reasoning text.
     public var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             pillButton

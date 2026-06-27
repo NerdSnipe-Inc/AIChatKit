@@ -3,13 +3,18 @@ import AIChatCore
 
 /// Displays a tool call with status colour coding and expandable result.
 public struct ToolCallView: View {
+    /// Tool call entry displayed by this row.
     public let entry: ChatSession.ToolCallEntry
     @State private var isExpanded = false
 
+    /// Creates a tool-call row view.
+    ///
+    /// - Parameter entry: Tool-call entry to render.
     public init(entry: ChatSession.ToolCallEntry) {
         self.entry = entry
     }
 
+    /// Row body containing status pill and optional details panel.
     public var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             pill

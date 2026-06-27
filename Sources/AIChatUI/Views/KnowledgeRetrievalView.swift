@@ -1,14 +1,23 @@
 import SwiftUI
 
+/// Collapsible row that displays retrieval context injected into a user turn.
 public struct KnowledgeRetrievalView: View {
+    /// Retrieval entry rendered by this row.
     public let entry: ChatSession.KnowledgeRetrievalEntry
+    /// Callback invoked when expansion toggles.
     public var onToggle: () -> Void
 
+    /// Creates a knowledge-retrieval row view.
+    ///
+    /// - Parameters:
+    ///   - entry: Retrieval entry to render.
+    ///   - onToggle: Expansion toggle handler.
     public init(entry: ChatSession.KnowledgeRetrievalEntry, onToggle: @escaping () -> Void) {
         self.entry = entry
         self.onToggle = onToggle
     }
 
+    /// Row body with summary label and expandable retrieved content.
     public var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Button(action: onToggle) {

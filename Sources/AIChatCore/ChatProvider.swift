@@ -1,6 +1,9 @@
 import Foundation
 
-/// Implemented by every backend: OpenAI, Anthropic, llama.cpp, MLX, etc.
+/// The provider contract implemented by every chat backend.
+///
+/// Conforming types translate `ChatMessage` values to provider-specific wire formats
+/// and emit normalized `ChatStreamEvent` values for the UI and orchestration layers.
 public protocol ChatProvider: Sendable {
     /// A stable identifier (e.g. "openai", "anthropic", "llama").
     var id: String { get }
@@ -11,14 +14,30 @@ public protocol ChatProvider: Sendable {
     /// to avoid confusing users with API-key references.
     var zeroResponseMessage: String { get }
 
-    /// Returns an async stream of events for a streaming completion request.
+    /// Starts a streaming completion request.
+    ///
+    /// Implementations should map provider events into normalized `ChatStreamEvent`
+    /// values and finish the stream when the provider signals completion.
+    ///
+    /// - Parameters:
+    ///   - messages: Ordered conversation history, including the latest user message.
+    ///   - model: Provider model identifier to use for generation.
+    ///   - options: Shared request options interpreted by the provider.
+    /// - Returns: An async stream of incremental chat events.
     func stream(
         messages: [ChatMessage],
         model: String,
         options: ChatRequestOptions
     ) -> AsyncThrowingStream<ChatStreamEvent, Error>
 
-    /// Returns a single completion result (non-streaming).
+    /// Executes a non-streaming completion request.
+    ///
+    /// - Parameters:
+    ///   - messages: Ordered conversation history, including the latest user message.
+    ///   - model: Provider model identifier to use for generation.
+    ///   - options: Shared request options interpreted by the provider.
+    /// - Returns: The completed assistant message and optional usage metadata.
+    /// - Throws: `ChatError` when the request fails, or provider-specific errors.
     func complete(
         messages: [ChatMessage],
         model: String,

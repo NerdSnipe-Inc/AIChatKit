@@ -3,20 +3,36 @@ import Foundation
 /// Recovers tool calls the model emitted as plain `<tool_call>{...}</tool_call>` text
 /// instead of native Gemma tool tokens (common when a LoRA was trained on XML tool format).
 public enum EmbeddedToolCallParser {
+    /// Parsed tool call recovered from embedded XML-like output.
     public struct ParsedCall: Sendable {
+        /// Tool/function name.
         public let name: String
+        /// JSON-encoded argument payload.
         public let arguments: String
 
+        /// Creates a parsed embedded tool call.
+        ///
+        /// - Parameters:
+        ///   - name: Tool/function name.
+        ///   - arguments: JSON-encoded arguments.
         public init(name: String, arguments: String) {
             self.name = name
             self.arguments = arguments
         }
     }
 
+    /// Parsed result containing cleaned assistant text and recovered calls.
     public struct Result: Sendable {
+        /// Assistant text with embedded call blocks removed.
         public let cleanedText: String
+        /// Tool calls recovered from the text.
         public let calls: [ParsedCall]
 
+        /// Creates a parsed embedded-tool-call result.
+        ///
+        /// - Parameters:
+        ///   - cleanedText: Assistant text with call blocks removed.
+        ///   - calls: Recovered tool calls.
         public init(cleanedText: String, calls: [ParsedCall]) {
             self.cleanedText = cleanedText
             self.calls = calls
@@ -25,6 +41,10 @@ public enum EmbeddedToolCallParser {
 
     private static let blockPattern = #"<tool_call>\s*(\{[\s\S]*?\})\s*</tool_call>"#
 
+    /// Parses embedded `<tool_call>{...}</tool_call>` blocks from text.
+    ///
+    /// - Parameter text: Assistant text to parse.
+    /// - Returns: Parsed calls and cleaned text with matched blocks removed.
     public static func parse(from text: String) -> Result {
         guard let regex = try? NSRegularExpression(pattern: blockPattern, options: []) else {
             return Result(cleanedText: text, calls: [])

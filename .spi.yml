@@ -1,10 +1,15 @@
 version: 1
+metadata:
+  authors:
+    - name: NerdSnipe Inc.
 builder:
   configs:
     - platform: macos-spm
       target: AIChatCore
     - platform: linux
       target: AIChatCore
+    - platform: macos-spm
+      target: AIChatFoundationModels
     - documentation_targets:
         - AIChatCore
         - AIChatOpenAI
