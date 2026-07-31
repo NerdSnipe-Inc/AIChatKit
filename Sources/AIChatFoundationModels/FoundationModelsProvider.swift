@@ -79,9 +79,11 @@ public struct FoundationModelsProvider: ChatProvider {
                 } catch {
                     // LanguageModelSession.GenerationError.exceededContextWindowSize is handled
                     // by the caller (AlricChatEngine) — it switches to MLXProvider with progress UI.
-                    // TODO: when PrivateCloudComputeLanguageModel ships in a public SDK build,
-                    //       catch exceededContextWindowSize here and escalate to PCC (32k context)
-                    //       before falling back to MLX. Check pcc.isAvailable before each call.
+                    // NOTE: PrivateCloudComputeLanguageModel exists in the compiled FoundationModels.tbd
+                    // but is NOT exposed in the public `.swiftinterface` for macOS (verified against Xcode 26.5 SDK).
+                    // It is private/unexposed API and must not be called via any workaround (e.g., @_silgen_name).
+                    // Future escalation to PCC (32k context) remains possible once Apple makes it part of the
+                    // public Swift interface. Check the next major Xcode/SDK release for changes.
                     continuation.finish(throwing: error)
                 }
             }
