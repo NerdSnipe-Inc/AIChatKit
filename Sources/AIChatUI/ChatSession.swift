@@ -357,12 +357,13 @@ public final class ChatSession: ObservableObject {
 
     // MARK: - Entry management helpers
 
+    @discardableResult
     private func recoverEmbeddedToolCalls(fromAIEntryId id: UUID) -> Bool {
         guard let idx = entries.indices.first(where: {
             if case .aiMessage(let e) = entries[$0], e.id == id { return true } else { return false }
         }), case .aiMessage(var e) = entries[idx] else { return false }
 
-        let parsed = GemmaOutputRecovery.parse(from: e.text, toolSchemas: options.nativeToolSpecs?.compactMap { $0 as? [String: Any] })
+        let parsed = GemmaOutputRecovery.parse(from: e.text, toolSchemas: options.nativeToolSpecs)
         guard !parsed.calls.isEmpty else { return false }
 
         e.text = parsed.cleanedText

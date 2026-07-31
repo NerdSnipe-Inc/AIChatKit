@@ -15,7 +15,7 @@ public enum GemmaOutputRecovery {
     /// - Returns: Cleaned assistant text and recovered tool calls.
     public static func parse(
         from text: String,
-        toolSchemas: [[String: Any]]? = nil
+        toolSchemas: [[String: any Sendable]]? = nil
     ) -> EmbeddedToolCallParser.Result {
         var working = stripChannelMarkup(text)
         var calls: [EmbeddedToolCallParser.ParsedCall] = []
@@ -97,7 +97,7 @@ public enum GemmaOutputRecovery {
     /// calls inside them, and returns the cleaned text with blocks removed.
     private static func extractToolCodeBlocks(
         from text: String,
-        schemas: [[String: Any]]?
+        schemas: [[String: any Sendable]]?
     ) -> ToolCodeResult {
         // Match fenced code blocks with language "tool_code" (case-insensitive).
         let pattern = #"```tool_code\s*\n([\s\S]*?)```"#
@@ -131,7 +131,7 @@ public enum GemmaOutputRecovery {
     /// Parses one or more Python-style `funcName(...)` calls from a block of text.
     private static func parsePythonCalls(
         from text: String,
-        schemas: [[String: Any]]?
+        schemas: [[String: any Sendable]]?
     ) -> [EmbeddedToolCallParser.ParsedCall] {
         // Match: identifier followed by ( ... )
         let pattern = #"(\w+)\s*\(([^)]*)\)"#
@@ -156,7 +156,7 @@ public enum GemmaOutputRecovery {
     private static func pythonArgsToJSON(
         _ argsRaw: String,
         toolName: String,
-        schemas: [[String: Any]]?
+        schemas: [[String: any Sendable]]?
     ) -> String {
         let trimmed = argsRaw.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { return "{}" }
@@ -206,14 +206,14 @@ public enum GemmaOutputRecovery {
     /// Returns the first required (or first defined) parameter name for a tool from its schema.
     private static func firstParamName(
         for toolName: String,
-        schemas: [[String: Any]]?
+        schemas: [[String: any Sendable]]?
     ) -> String? {
         guard let schemas else { return nil }
         for spec in schemas {
-            guard let fn = spec["function"] as? [String: Any],
+            guard let fn = spec["function"] as? [String: any Sendable],
                   fn["name"] as? String == toolName,
-                  let params = fn["parameters"] as? [String: Any],
-                  let props = params["properties"] as? [String: Any]
+                  let params = fn["parameters"] as? [String: any Sendable],
+                  let props = params["properties"] as? [String: any Sendable]
             else { continue }
 
             // Prefer the first required param, then any param.
