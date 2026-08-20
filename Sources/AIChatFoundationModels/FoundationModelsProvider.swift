@@ -131,20 +131,33 @@ public struct FoundationModelsProvider: ChatProvider {
         var position: String.Index?
         for try await snapshot in session.streamResponse(to: Prompt(prompt), options: genOptions) {
             try Task.checkCancellation()
-            let start = position ?? snapshot.content.startIndex
-            let delta = String(snapshot.content[start...])
+            let (delta, newPosition) = nextDelta(fullText: snapshot.content, position: position)
             if !delta.isEmpty {
                 continuation.yield(.text(delta))
             }
-            position = snapshot.content.endIndex
+            position = newPosition
         }
         continuation.yield(.done)
         continuation.finish()
     }
 
+    /// Computes the unseen suffix of a cumulative snapshot given the last-seen end index.
+    /// Pure diffing logic extracted from `performStream` so it's unit-testable without a live
+    /// `LanguageModelSession` — every call site is exercised on real hardware, but this shape
+    /// (cumulative-snapshot-to-delta) is exactly what a fixture string can verify offline.
+    static func nextDelta(
+        fullText: String,
+        position: String.Index?
+    ) -> (delta: String, newPosition: String.Index) {
+        let start = position ?? fullText.startIndex
+        return (String(fullText[start...]), fullText.endIndex)
+    }
+
     // MARK: - Transcript construction
 
-    private static func buildTranscript(
+    /// Not `private` so `AIChatFoundationModelsTests` can verify role mapping and dropped-role
+    /// behavior (`@testable import`) without needing a live Apple Intelligence session.
+    static func buildTranscript(
         from messages: some Collection<ChatMessage>,
         options: GenerationOptions,
         systemPrompt: String?
@@ -168,7 +181,7 @@ public struct FoundationModelsProvider: ChatProvider {
 
     /// Maps a role/content pair to the appropriate `Transcript.Entry` variant.
     /// Returns `nil` for roles that have no FoundationModels equivalent (e.g. `.tool`).
-    private static func transcriptEntry(
+    static func transcriptEntry(
         role: String,
         content: String,
         options: GenerationOptions
@@ -194,7 +207,7 @@ public struct FoundationModelsProvider: ChatProvider {
         }
     }
 
-    private static func extractText(from message: ChatMessage) -> String? {
+    static func extractText(from message: ChatMessage) -> String? {
         let parts = message.content.compactMap { block -> String? in
             guard case .text(let t) = block else { return nil }
             return t
