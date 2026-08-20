@@ -87,9 +87,13 @@ final class ChatSessionTests: XCTestCase {
     func test_toolCallComplete_createsToolEntry() async throws {
         let session = makeSession(events: [.toolCallComplete(id: "c1", name: "search", arguments: "{}")])
         session.send("search for x")
-        try await waitForGeneration(session)
+        // A tool call is added with status `.running` and `isGenerating` correctly
+        // stays true until the host calls `submitToolResult` — so we can't wait on
+        // `isGenerating` here as other tests do. Wait for the tool entry itself instead.
+        try await waitForToolCallEntry(session)
         let toolEntries = session.entries.filter { if case .toolCall = $0 { return true } else { return false } }
         XCTAssertEqual(toolEntries.count, 1)
+        XCTAssertTrue(session.isGenerating, "Session should remain in-generation while a tool call is pending host execution")
     }
 
     // MARK: - isGenerating lifecycle
@@ -244,6 +248,20 @@ final class ChatSessionTests: XCTestCase {
             try await Task.sleep(for: .milliseconds(50))
         }
         XCTAssertFalse(session.isGenerating, "Generation did not complete within \(timeout)s")
+    }
+
+    /// Waits for a tool-call entry to appear. Unlike `waitForGeneration`, this does not
+    /// assert `isGenerating == false` — a pending tool call correctly keeps `isGenerating`
+    /// true until the host calls `submitToolResult`.
+    private func waitForToolCallEntry(_ session: ChatSession, timeout: Double = 3.0) async throws {
+        let deadline = Date().addingTimeInterval(timeout)
+        func hasToolEntry() -> Bool {
+            session.entries.contains { if case .toolCall = $0 { return true } else { return false } }
+        }
+        while !hasToolEntry() && Date() < deadline {
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        XCTAssertTrue(hasToolEntry(), "Tool call entry did not appear within \(timeout)s")
     }
 }
 
