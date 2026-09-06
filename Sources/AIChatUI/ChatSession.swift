@@ -598,6 +598,22 @@ public extension ChatSession {
         public var isThinking: Bool
         /// Anthropic thinking signature — preserved for multi-turn round-tripping.
         public var thinkingSignature: String?
+
+        /// Public memberwise initializer — a `public struct` with public stored properties
+        /// otherwise only gets an `internal` synthesized init, which blocks a host app that
+        /// drives its own generation loop (rather than `ChatSession` itself) from constructing
+        /// an entry to hand to `ThinkingTileView`.
+        public init(
+            id: UUID, text: String, duration: TimeInterval = 0,
+            isExpanded: Bool = false, isThinking: Bool = false, thinkingSignature: String? = nil
+        ) {
+            self.id = id
+            self.text = text
+            self.duration = duration
+            self.isExpanded = isExpanded
+            self.isThinking = isThinking
+            self.thinkingSignature = thinkingSignature
+        }
     }
 
     /// Tool invocation row with execution status and optional result.
