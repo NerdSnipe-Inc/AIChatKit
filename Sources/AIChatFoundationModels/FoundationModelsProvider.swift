@@ -19,16 +19,29 @@ public struct FoundationModelsProvider: ChatProvider {
 
     private let model: SystemLanguageModel
     private let generationOptions: GenerationOptions
+    /// Tools available to the session, via Apple's own `Tool` protocol — a fundamentally different
+    /// mechanism from `ChatRequestOptions.tools`/`ChatStreamEvent.toolCallComplete` (the
+    /// provider-agnostic shape `MLXProvider` uses): a `LanguageModelSession` constructed with
+    /// `tools:` calls them automatically and transparently during `streamResponse`/`respond`, so
+    /// `stream(...)`/`performStream(...)` below need no tool-call event handling of their own —
+    /// the streamed text already reflects whatever the model learned from any tool calls it made.
+    /// Empty by default so every existing caller (which never passed this) is unaffected.
+    private let tools: [any Tool]
 
     /// - Parameters:
     ///   - model: The on-device model. Defaults to `SystemLanguageModel.default`.
     ///   - generationOptions: Token sampling options. Defaults to `GenerationOptions()`.
+    ///   - tools: `Tool`-conforming types this session may call during generation. Empty by
+    ///     default. See this property's own doc comment for how this differs from
+    ///     `ChatRequestOptions.tools`.
     public init(
         model: SystemLanguageModel = .default,
-        generationOptions: GenerationOptions = GenerationOptions()
+        generationOptions: GenerationOptions = GenerationOptions(),
+        tools: [any Tool] = []
     ) {
         self.model = model
         self.generationOptions = generationOptions
+        self.tools = tools
     }
 
     // MARK: - ChatProvider
@@ -48,6 +61,7 @@ public struct FoundationModelsProvider: ChatProvider {
         let llmModel     = self.model
         let genOptions   = self.generationOptions
         let systemPrompt = options.systemPrompt
+        let sessionTools = self.tools
 
         return AsyncThrowingStream { continuation in
             Task {
@@ -66,7 +80,7 @@ public struct FoundationModelsProvider: ChatProvider {
                         systemPrompt: systemPrompt
                     )
 
-                    let session = LanguageModelSession(model: llmModel, transcript: transcript)
+                    let session = LanguageModelSession(model: llmModel, tools: sessionTools, transcript: transcript)
 
                     try await Self.performStream(
                         session: session,
