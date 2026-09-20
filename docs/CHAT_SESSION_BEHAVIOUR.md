@@ -66,7 +66,7 @@ streaming/thinking animations, **keeps** the partial text visible and in history
 alternating), and marks any pending tool call `.failed` with a synthetic “Cancelled by user.”
 result so history never contains a tool call without an answer. `error` is not set. The session is
 immediately reusable. If nothing had been produced, the user message stays unanswered and the next
-`send` produces two consecutive user turns (Gemma’s template accepts that).
+`send` produces two consecutive user turns (not exercised against the live model).
 
 ## Other rules
 
