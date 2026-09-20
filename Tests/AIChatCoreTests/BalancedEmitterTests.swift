@@ -2,11 +2,18 @@ import XCTest
 @testable import AIChatCore
 
 /// Thread-safe collector for emitter output in tests.
-private actor Collector {
-    var chunks: [String] = []
-    func append(_ s: String) { chunks.append(s) }
-    var joined: String { chunks.joined() }
-    var count: Int { chunks.count }
+///
+/// Deliberately synchronous (lock-protected) rather than an actor fed by `Task { await ... }`:
+/// `BalancedEmitter` is an actor that calls `onEmit` sequentially, so appending inline keeps the
+/// chunks in order and guarantees every chunk is recorded before `wait()` returns. Forwarding each
+/// chunk through its own detached `Task` let the tasks run out of order (seen as "helol" for
+/// "hello") and after `wait()` had already returned (seen as "hell"), making these tests flaky.
+private final class Collector: @unchecked Sendable {
+    private let lock = NSLock()
+    private var chunks: [String] = []
+    func append(_ s: String) { lock.lock(); chunks.append(s); lock.unlock() }
+    var joined: String { lock.lock(); defer { lock.unlock() }; return chunks.joined() }
+    var count: Int { lock.lock(); defer { lock.unlock() }; return chunks.count }
 }
 
 final class BalancedEmitterTests: XCTestCase {
@@ -14,26 +21,24 @@ final class BalancedEmitterTests: XCTestCase {
     func test_add_emitsChunk() async {
         let col = Collector()
         let emitter = BalancedEmitter(duration: 0.05, frequency: 60) { chunk in
-            Task { await col.append(chunk) }
+            col.append(chunk)
         }
         await emitter.add("hello")
         await emitter.wait()
-        let result = await col.joined
+        let result = col.joined
         XCTAssertEqual(result, "hello")
     }
 
     func test_multipleAdds_emitAllContent() async {
         let col = Collector()
         let emitter = BalancedEmitter(duration: 0.1, frequency: 60) { chunk in
-            Task { await col.append(chunk) }
+            col.append(chunk)
         }
         await emitter.add("foo")
         await emitter.add("bar")
         await emitter.add("baz")
         await emitter.wait()
-        // Brief wait for final Task callbacks to settle
-        try? await Task.sleep(for: .milliseconds(50))
-        let result = await col.joined
+        let result = col.joined
         XCTAssertEqual(result, "foobarbaz")
     }
 
@@ -56,14 +61,13 @@ final class BalancedEmitterTests: XCTestCase {
     func test_batchSizeAdaptsToBuffer() async {
         let col = Collector()
         let emitter = BalancedEmitter(duration: 0.5, frequency: 10) { chunk in
-            Task { await col.append(chunk) }
+            col.append(chunk)
         }
         let bigText = String(repeating: "a", count: 500)
         await emitter.add(bigText)
         await emitter.wait()
-        try? await Task.sleep(for: .milliseconds(100))
-        let total = await col.joined
-        let numChunks = await col.count
+        let total = col.joined
+        let numChunks = col.count
         XCTAssertEqual(total.count, 500)
         XCTAssertLessThan(numChunks, 500)
     }
