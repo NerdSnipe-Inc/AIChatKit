@@ -37,7 +37,14 @@ public final class ChatSession: ObservableObject {
     private var reasoningStart: Date?
     // Incremented on every startGeneration; lets finishGeneration detect if it was superseded.
     private var generationID: Int = 0
-    private var generationWasCancelled = false
+    /// True from `startGeneration` until the provider stream ends (or `cancel()`).
+    private var isStreamActive = false
+    /// Full text streamed this turn (authoritative; the entry text is paced by the emitter).
+    private var rawText = ""
+    /// Tool calls emitted this turn, committed to history with the assistant text.
+    private var pendingToolCalls: [ChatMessage.ToolCallBlock] = []
+    /// Tool results submitted by the host while the stream was still running.
+    private var pendingToolResults: [ChatMessage] = []
 
     /// Creates a chat session view model.
     ///
@@ -79,12 +86,19 @@ public final class ChatSession: ObservableObject {
     /// When `knowledge` is provided, retrieved context is rendered as a separate
     /// entry and prepended to the provider-facing user message payload.
     ///
+    /// The message is ignored (and `false` returned) when it is empty/whitespace-only or
+    /// when the session is busy — either streaming a reply or waiting for the host to
+    /// answer pending tool calls. See `docs/CHAT_SESSION_BEHAVIOUR.md`.
+    ///
     /// - Parameters:
     ///   - text: User-authored message text.
     ///   - knowledge: Optional retrieval context to inject.
-    public func send(_ text: String, knowledge: KnowledgeRetrievalInjection? = nil) {
+    /// - Returns: `true` when the message was accepted and generation started.
+    @discardableResult
+    public func send(_ text: String, knowledge: KnowledgeRetrievalInjection? = nil) -> Bool {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, !isGenerating else { return }
+        guard !trimmed.isEmpty else { return false }
+        guard !isGenerating else { return false }
 
         let userId = UUID()
         entries.append(.userMessage(UserEntry(id: userId, text: trimmed)))
@@ -110,6 +124,7 @@ public final class ChatSession: ObservableObject {
         }
 
         startGeneration()
+        return true
     }
 
     /// Programmatic tool call when the harness must execute a tool the model planned but did not emit.
@@ -122,28 +137,67 @@ public final class ChatSession: ObservableObject {
         let id = UUID().uuidString
         let normalized = GemmaToolArguments.normalize(arguments)
         addToolCallEntry(id: id, name: name, arguments: normalized)
-        appendAssistantToolCall(id: id, name: name, arguments: normalized)
+        appendAssistantToolCall(id: id, name: name, arguments: historyArguments(normalized))
     }
 
-    /// Append a tool result to history and continue the conversation.
+    /// `true` when the model has finished streaming and one or more tool calls are waiting
+    /// for the host to call ``submitToolResult(toolCallId:content:isError:)``.
+    public var isAwaitingToolResults: Bool {
+        !isStreamActive && hasRunningToolCalls
+    }
+
+    /// Records a tool result and, once every pending tool call of the turn has been answered,
+    /// continues the conversation so the model can use the results.
+    ///
+    /// Safe to call as soon as a `.toolCall` entry appears, even while the model is still
+    /// streaming: the result is queued and applied when the stream ends. With several parallel
+    /// tool calls the model is only re-invoked after the last one is answered. Results for
+    /// unknown or already-answered tool call ids are ignored and reported through ``error``.
     ///
     /// - Parameters:
     ///   - toolCallId: Identifier for the pending tool call.
-    ///   - content: Tool output content.
+    ///   - content: Tool output content. Empty output is replaced by a placeholder because
+    ///     some chat templates drop empty tool messages.
     ///   - isError: Marks the tool call as failed when `true`.
     public func submitToolResult(toolCallId: String, content: String, isError: Bool = false) {
-        let msg = ChatMessage(toolCallId: toolCallId, content: content)
+        guard runningToolCall(id: toolCallId) != nil else {
+            error = ChatSessionError.unknownToolCall(id: toolCallId)
+            return
+        }
+        let body = content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? (isError ? "Tool failed with no output." : "(tool returned no output)")
+            : content
+        updateToolCallStatus(id: toolCallId, status: isError ? .failed : .succeeded, result: body)
+        let msg = ChatMessage(toolCallId: toolCallId, content: body)
+        if isStreamActive {
+            // The assistant turn that issued this call hasn't been committed to history yet.
+            pendingToolResults.append(msg)
+            return
+        }
         history.append(msg)
-        updateToolCallStatus(id: toolCallId, status: isError ? .failed : .succeeded, result: content)
-        startGeneration()
+        if !hasRunningToolCalls { startGeneration() }
     }
 
-    /// Cancels any active generation and clears transient activity indicators.
+    /// Cancels any active generation and tool wait, leaving the session idle and reusable.
+    ///
+    /// Whatever the model streamed so far stays visible (its rows stop animating) and is kept in
+    /// the provider history so the next turn stays coherent. Tool calls that were still pending
+    /// are marked failed with a "cancelled" result.
     public func cancel() {
+        let wasActive = isStreamActive || isGenerating
+        guard wasActive else { return }
         streamTask?.cancel()
         streamTask = nil
-        isGenerating = false
+        generationID &+= 1          // orphan the old task's late callbacks
+        textEmitter = nil
+        isStreamActive = false
+        finaliseStreamedEntries()
+        commitAssistantTurn()
+        pendingToolResults.removeAll()
+        failRunningToolCalls(reason: "Cancelled by user.")
         removeActivity()
+        isGenerating = false
+        ChatLog.info(.core, "session cancelled")
     }
 
     /// Toggles expansion for a knowledge-retrieval entry.
@@ -172,12 +226,16 @@ public final class ChatSession: ObservableObject {
         }
     }
 
-    /// Clears conversation entries and provider history when idle.
+    /// Clears conversation entries and provider history. Ignored while the model is streaming;
+    /// allowed while merely waiting on tool results (pending calls are discarded).
     public func clearHistory() {
-        guard !isGenerating else { return }
+        guard !isStreamActive else { return }
         streamTask?.cancel()
         streamTask = nil
+        generationID &+= 1
         isGenerating = false
+        resetTurnState()
+        error = nil
         entries = []
         history = []
     }
@@ -190,11 +248,11 @@ public final class ChatSession: ObservableObject {
     public func loadSnapshot(entries: [Entry], history: [ChatMessage]) {
         streamTask?.cancel()
         streamTask = nil
+        generationID &+= 1
         isGenerating = false
+        isStreamActive = false
         error = nil
-        activeReasoningId = nil
-        activeAIId = nil
-        reasoningStart = nil
+        resetTurnState()
         textEmitter = nil
         self.entries = entries
         self.history = history
@@ -202,11 +260,18 @@ public final class ChatSession: ObservableObject {
 
     // MARK: - Private: generation lifecycle
 
+    private func resetTurnState() {
+        activeReasoningId = nil
+        activeAIId = nil
+        reasoningStart = nil
+        rawText = ""
+        pendingToolCalls = []
+        pendingToolResults = []
+        isStreamActive = false
+    }
+
     private func startGeneration() {
         // Cancel any in-flight stream before starting a new one.
-        // Without this, a second call (e.g. from submitToolResult while the first
-        // stream's finishGeneration hasn't yet run) would leak the old Task and
-        // both streams would write to history concurrently.
         streamTask?.cancel()
         streamTask = nil
 
@@ -214,18 +279,19 @@ public final class ChatSession: ObservableObject {
         let myGenerationID = generationID
 
         isGenerating = true
-        generationWasCancelled = false
         error = nil
-        activeReasoningId = nil
-        activeAIId = nil
-        reasoningStart = nil
+        resetTurnState()
+        isStreamActive = true
 
         let activityId = UUID()
         entries.append(.activity(ActivityEntry(id: activityId, text: "Thinking…")))
 
         let emitter = BalancedEmitter(duration: 1.0, frequency: 30) { [weak self] chunk in
             Task { @MainActor [weak self] in
-                self?.appendToActiveAI(chunk)
+                // Drop chunks from a superseded/cancelled generation so they can't leak
+                // into the next reply's entry.
+                guard let self, self.generationID == myGenerationID else { return }
+                self.appendToActiveAI(chunk)
             }
         }
         textEmitter = emitter
@@ -247,7 +313,8 @@ public final class ChatSession: ObservableObject {
                 for try await event in stream {
                     try Task.checkCancellation()
                     await MainActor.run { [weak self] in
-                        self?.handle(event)
+                        guard let self, self.generationID == myGenerationID else { return }
+                        self.handle(event)
                     }
                     // Feed text through balanced emitter on each text event
                     if case .text(let t) = event {
@@ -257,18 +324,13 @@ public final class ChatSession: ObservableObject {
                 await emitter.wait()
             } catch is CancellationError {
                 await emitter.cancel()
-                await MainActor.run { [weak self] in
-                    guard let self else { return }
-                    if self.generationID == myGenerationID {
-                        self.generationWasCancelled = true
-                    }
-                }
             } catch {
                 await emitter.cancel()
                 await MainActor.run { [weak self] in
                     guard let self else { return }
                     // Only store error if this generation wasn't superseded
                     if self.generationID == myGenerationID {
+                        ChatLog.error(.core, "stream failed: \(error.localizedDescription)")
                         self.error = error
                     }
                 }
@@ -278,10 +340,13 @@ public final class ChatSession: ObservableObject {
 
     private func handle(_ event: ChatStreamEvent) {
         switch event {
-        case .text:
-            // Actual text delivery is handled by the BalancedEmitter callback; here we just ensure entries exist
+        case .text(let t):
+            // Display delivery is paced by the BalancedEmitter callback; `rawText` is the
+            // authoritative full text (used to finalise the entry, recover tool calls, and
+            // build history) so a slow emitter can never truncate what we commit.
             removeActivity()
             ensureAIEntry()
+            rawText += t
 
         case .reasoning(let delta):
             removeActivity()
@@ -299,7 +364,7 @@ public final class ChatSession: ObservableObject {
             removeActivity()
             let normalized = GemmaToolArguments.normalize(args)
             addToolCallEntry(id: id, name: name, arguments: normalized)
-            appendAssistantToolCall(id: id, name: name, arguments: normalized)
+            pendingToolCalls.append(.init(id: id, name: name, arguments: historyArguments(normalized)))
 
         case .usage:
             break
@@ -313,49 +378,138 @@ public final class ChatSession: ObservableObject {
         await emitter.wait()
         await MainActor.run { [weak self] in
             guard let self else { return }
-            // If a newer generation started while we were finishing, don't touch shared state.
+            // Superseded or cancelled: `cancel()` already finalised everything.
             guard self.generationID == generationID else { return }
-            if self.generationWasCancelled {
-                self.generationWasCancelled = false
-                self.removeActivity()
-                self.isGenerating = false
-                self.streamTask = nil
-                return
+            self.completeTurn()
+        }
+    }
+
+    /// Finalises the just-finished stream: entries, history commit, error/empty-response
+    /// surfacing, and (when every pending tool call was already answered) auto-continuation.
+    private func completeTurn() {
+        isStreamActive = false
+        streamTask = nil
+        textEmitter = nil
+
+        finaliseStreamedEntries()
+        // Recover tool calls the model wrote as <tool_call> text (LoRA / training artifact).
+        if let aid = activeAIId { recoverEmbeddedToolCalls(fromAIEntryId: aid) }
+        removeActivity()
+
+        let hasText = !rawTextCleaned.isEmpty
+        let hasReasoning = reasoningText?.isEmpty == false
+        let hasToolCalls = !pendingToolCalls.isEmpty
+
+        // A whitespace-only reply is not a reply: drop the empty bubble.
+        if !hasText, let aid = activeAIId {
+            entries.removeAll { if case .aiMessage(let e) = $0 { return e.id == aid } else { return false } }
+            activeAIId = nil
+        }
+
+        commitAssistantTurn()
+
+        if let err = error {
+            let msg = (err as? LocalizedError)?.errorDescription ?? err.localizedDescription
+            var line = "⚠️ \(msg)"
+            if let suggestion = (err as? LocalizedError)?.recoverySuggestion, !suggestion.isEmpty {
+                line += " \(suggestion)"
             }
-            // Mark reasoning entry as done (stops the thinking animation)
-            if let rid = activeReasoningId {
-                finaliseReasoningEntry(id: rid)
-            }
-            // Recover tool calls the model wrote as <tool_call> text (LoRA / training artifact).
-            if let aid = activeAIId {
-                recoverEmbeddedToolCalls(fromAIEntryId: aid)
-                if let aid = activeAIId {
-                    captureAssistantMessage(id: aid)
-                }
-            }
-            removeActivity()
-            // Surface any error inline (the top banner can be missed).
-            let hasToolCalls = entries.contains { if case .toolCall = $0 { return true } else { return false } }
-            let hasReasoningContent = entries.contains {
-                if case .reasoning(let e) = $0 { return !e.text.isEmpty }
-                return false
-            }
-            if let err = error, activeAIId == nil {
-                let msg = (err as? LocalizedError)?.errorDescription ?? err.localizedDescription
-                entries.append(.activity(ActivityEntry(id: UUID(), text: "⚠️ \(msg)", isError: true)))
-            } else if error == nil && activeAIId == nil && activeReasoningId == nil && !hasToolCalls && !hasReasoningContent {
+            entries.append(.activity(ActivityEntry(id: UUID(), text: line, isError: true)))
+        } else if !hasText && !hasToolCalls {
+            if hasReasoning {
+                ChatLog.warning(.core, "model produced reasoning but no answer")
+                entries.append(.activity(ActivityEntry(
+                    id: UUID(),
+                    text: "⚠️ The model finished thinking without writing an answer (it may have hit the token limit). Try again, or raise the max-token setting.",
+                    isError: true
+                )))
+            } else {
                 entries.append(.activity(ActivityEntry(id: UUID(), text: "⚠️ \(provider.zeroResponseMessage)", isError: true)))
             }
-            let hasRunningTools = entries.contains {
-                if case .toolCall(let e) = $0 { return e.status == .running }
-                return false
-            }
-            isGenerating = hasRunningTools
-            if !hasRunningTools { streamTask = nil }
+        }
+
+        // Apply tool results the host submitted while we were still streaming.
+        if !pendingToolResults.isEmpty {
+            history.append(contentsOf: pendingToolResults)
+            pendingToolResults = []
+        }
+
+        if hasRunningToolCalls {
+            isGenerating = true          // waiting for the host's submitToolResult
+        } else if error == nil, hasToolCalls {
+            startGeneration()            // every call was answered during streaming
+        } else {
+            isGenerating = false
         }
     }
 
     // MARK: - Entry management helpers
+
+    private var hasRunningToolCalls: Bool {
+        entries.contains { if case .toolCall(let e) = $0 { return e.status == .running } else { return false } }
+    }
+
+    private func runningToolCall(id: String) -> ToolCallEntry? {
+        for entry in entries { if case .toolCall(let e) = entry, e.id == id, e.status == .running { return e } }
+        return nil
+    }
+
+    private var rawTextCleaned: String { rawText.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    private var reasoningText: String? {
+        guard let rid = activeReasoningId else { return nil }
+        for entry in entries { if case .reasoning(let e) = entry, e.id == rid { return e.text } }
+        return nil
+    }
+
+    /// Stops the streaming/thinking animations and makes the AI entry text authoritative.
+    private func finaliseStreamedEntries() {
+        if let rid = activeReasoningId { finaliseReasoningEntry(id: rid) }
+        if let aid = activeAIId {
+            for i in entries.indices {
+                if case .aiMessage(var e) = entries[i], e.id == aid {
+                    e.text = rawText
+                    e.isStreaming = false
+                    entries[i] = .aiMessage(e)
+                    break
+                }
+            }
+        }
+    }
+
+    /// Writes the current turn (thinking + text + any tool calls) to history as ONE assistant
+    /// message. Tool calls and text share a message so providers that require
+    /// `assistant(text, tool_calls) → tool(result)` ordering (OpenAI, Anthropic) stay valid.
+    private func commitAssistantTurn() {
+        var blocks: [ChatMessage.ContentBlock] = []
+        if let thinking = reasoningText, !thinking.isEmpty {
+            var sig: String?
+            if let rid = activeReasoningId {
+                for entry in entries { if case .reasoning(let e) = entry, e.id == rid { sig = e.thinkingSignature } }
+            }
+            blocks.append(.thinking(.init(text: thinking, signature: sig)))
+        }
+        let text = rawTextCleaned.isEmpty ? "" : rawText
+        if !text.isEmpty { blocks.append(.text(text)) }
+        let calls = pendingToolCalls
+        pendingToolCalls = []
+        rawText = ""
+        guard !blocks.isEmpty || !calls.isEmpty else { return }
+        history.append(ChatMessage(role: .assistant, content: blocks, toolCalls: calls.isEmpty ? nil : calls))
+    }
+
+    /// Marks every running tool call failed and records a matching result in history so a
+    /// later turn never sees a tool call without an answer.
+    private func failRunningToolCalls(reason: String) {
+        for i in entries.indices {
+            if case .toolCall(var e) = entries[i], e.status == .running {
+                e.status = .failed
+                e.result = reason
+                entries[i] = .toolCall(e)
+                history.append(ChatMessage(toolCallId: e.id, content: reason))
+            }
+        }
+    }
 
     @discardableResult
     private func recoverEmbeddedToolCalls(fromAIEntryId id: UUID) -> Bool {
@@ -368,6 +522,7 @@ public final class ChatSession: ObservableObject {
 
         e.text = parsed.cleanedText
         e.isStreaming = false
+        rawText = parsed.cleanedText
         if e.text.isEmpty {
             entries.remove(at: idx)
             activeAIId = nil
@@ -379,7 +534,7 @@ public final class ChatSession: ObservableObject {
             let toolId = UUID().uuidString
             let normalized = GemmaToolArguments.normalize(call.arguments)
             addToolCallEntry(id: toolId, name: call.name, arguments: normalized)
-            appendAssistantToolCall(id: toolId, name: call.name, arguments: normalized)
+            pendingToolCalls.append(.init(id: toolId, name: call.name, arguments: historyArguments(normalized)))
         }
         return true
     }
@@ -472,6 +627,16 @@ public final class ChatSession: ObservableObject {
         }
     }
 
+    /// Provider-facing arguments must be a JSON object (OpenAI/Anthropic reject anything else, and
+    /// MLX silently drops the whole call). The entry keeps the raw text for display/debugging.
+    private func historyArguments(_ normalized: String) -> String {
+        if let d = normalized.data(using: .utf8), (try? JSONSerialization.jsonObject(with: d)) is [String: Any] {
+            return normalized
+        }
+        ChatLog.warning(.tools, "tool call arguments are not a JSON object; sending {} to the provider")
+        return "{}"
+    }
+
     private func appendAssistantToolCall(id: String, name: String, arguments: String) {
         let block = ChatMessage.ToolCallBlock(id: id, name: name, arguments: arguments)
         // Accumulate into a single assistant message with all tool calls
@@ -485,32 +650,6 @@ public final class ChatSession: ObservableObject {
         } else {
             history.append(ChatMessage(role: .assistant, content: [], toolCalls: [block]))
         }
-    }
-
-    private func captureAssistantMessage(id: UUID) {
-        guard let idx = entries.indices.first(where: {
-            if case .aiMessage(let e) = entries[$0], e.id == id { return true } else { return false }
-        }) else { return }
-        if case .aiMessage(var e) = entries[idx] {
-            e.isStreaming = false
-            entries[idx] = .aiMessage(e)
-        }
-
-        // Build the assistant message for history
-        let text = { () -> String in
-            if case .aiMessage(let e) = entries[idx] { return e.text } else { return "" }
-        }()
-
-        // Pull thinking content from the reasoning entry (if any)
-        var contentBlocks: [ChatMessage.ContentBlock] = []
-        if let rid = activeReasoningId, let rIdx = entries.indices.first(where: {
-            if case .reasoning(let e) = entries[$0], e.id == rid { return true } else { return false }
-        }), case .reasoning(let re) = entries[rIdx] {
-            contentBlocks.append(.thinking(.init(text: re.text, signature: re.thinkingSignature)))
-        }
-        if !text.isEmpty { contentBlocks.append(.text(text)) }
-
-        history.append(ChatMessage(role: .assistant, content: contentBlocks))
     }
 
     private func removeActivity() {
@@ -683,5 +822,21 @@ public extension ChatSession {
         public var text: String
         /// Whether the activity represents an error.
         public var isError: Bool = false
+    }
+}
+
+// MARK: - Session errors
+
+/// Errors raised by `ChatSession` itself (as opposed to the provider).
+public enum ChatSessionError: Error, LocalizedError, Sendable {
+    /// `submitToolResult` was called with an id that has no pending tool call.
+    case unknownToolCall(id: String)
+
+    /// User-facing description.
+    public var errorDescription: String? {
+        switch self {
+        case .unknownToolCall(let id):
+            return "Tool result ignored: no pending tool call with id \"\(id)\" (already answered, cancelled, or never issued)."
+        }
     }
 }

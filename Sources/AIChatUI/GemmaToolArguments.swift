@@ -28,59 +28,16 @@ public enum GemmaToolArguments {
 
     private static func isValidJSONObject(_ json: String) -> Bool {
         guard let data = json.data(using: .utf8) else { return false }
-        return (try? JSONSerialization.jsonObject(with: data)) != nil
+        return (try? JSONSerialization.jsonObject(with: data)) is [String: Any]
     }
 
     private static func extractInlineCallJSON(from text: String) -> String? {
-        guard let callRange = text.range(of: "call:") else { return nil }
-        let tail = String(text[callRange.upperBound...])
-        guard let braceStart = tail.firstIndex(of: "{"),
-              let braceEnd = balancedBraceEnd(in: tail, from: braceStart) else { return nil }
-
-        let argsBody = String(tail[tail.index(after: braceStart)..<braceEnd])
-        let json = gemmaArgsToJSON(argsBody)
-        return isValidJSONObject(json) ? json : nil
-    }
-
-    private static func balancedBraceEnd(in text: String, from start: String.Index) -> String.Index? {
-        guard text[start] == "{" else { return nil }
-        var depth = 0
-        var i = start
-        while i < text.endIndex {
-            if text[i] == "{" { depth += 1 }
-            else if text[i] == "}" {
-                depth -= 1
-                if depth == 0 { return i }
-            }
-            i = text.index(after: i)
-        }
-        return nil
+        guard let idx = GemmaCallSyntax.nextCallCandidate(in: text),
+              case .complete(let call, _) = GemmaCallSyntax.scan(text, at: idx) else { return nil }
+        return call.argumentsJSON
     }
 
     static func gemmaArgsToJSON(_ body: String) -> String {
-        var strings: [String] = []
-        var working = body
-
-        while let start = working.range(of: #"<|"|>"#) {
-            guard let end = working.range(of: #"<|"|>"#, range: start.upperBound..<working.endIndex) else { break }
-            strings.append(String(working[start.upperBound..<end.lowerBound]))
-            working.replaceSubrange(start.lowerBound..<end.upperBound, with: "\u{0000}\(strings.count - 1)\u{0000}")
-        }
-
-        var json = working.replacingOccurrences(
-            of: #"(^|[{,]\s*)(\w+)\s*:"#,
-            with: "$1\"$2\":",
-            options: .regularExpression
-        )
-
-        for (idx, value) in strings.enumerated() {
-            let escaped = value
-                .replacingOccurrences(of: "\\", with: "\\\\")
-                .replacingOccurrences(of: "\"", with: "\\\"")
-            json = json.replacingOccurrences(of: "\u{0000}\(idx)\u{0000}", with: "\"\(escaped)\"")
-        }
-
-        if !json.hasPrefix("{") { json = "{\(json)}" }
-        return json
+        GemmaCallSyntax.argumentsJSON(from: body) ?? "{\(body)}"
     }
 }
