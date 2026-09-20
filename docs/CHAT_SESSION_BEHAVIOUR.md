@@ -80,6 +80,10 @@ not cancels and keep their user turn (the user may retry). Repeated cancel/resen
 accumulate turns. Verified with scripted providers (`ChatSessionLifecycleTests`) and live
 (`LiveSessionTests`).
 
+In the UI, `ConversationView` renders a cancelled user message dimmed, with the caption “Cancelled —
+the model won't see this message” and a matching VoiceOver label (`UserMessagePresentation`, unit
+tested in `UserMessageRowTests`). Hosts that draw their own rows can read `UserEntry.isCancelled`.
+
 ## Other rules
 
 * `send` returns `false` (and does nothing) for empty/whitespace text or while busy

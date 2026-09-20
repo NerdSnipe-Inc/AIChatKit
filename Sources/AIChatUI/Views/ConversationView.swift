@@ -80,22 +80,55 @@ public struct ConversationView: View {
 
 // MARK: - Row types
 
-private struct UserMessageRow: View {
+/// Presentation rules for a user-message row, kept out of the view so they can be unit-tested.
+enum UserMessagePresentation {
+    /// Shown under a message the user cancelled before the model produced anything. Such a turn is
+    /// dropped from the history sent to the provider on later turns (see ``ChatSession``), so the
+    /// caption says what the user actually needs to know: the model won't see it.
+    static let cancelledCaption = "Cancelled — the model won't see this message"
+
+    /// Caption under the bubble, or `nil` for a normal message.
+    static func caption(for entry: ChatSession.UserEntry) -> String? {
+        entry.isCancelled ? cancelledCaption : nil
+    }
+
+    /// Bubble opacity: a cancelled message is dimmed so it reads as abandoned.
+    static func bubbleOpacity(for entry: ChatSession.UserEntry) -> Double {
+        entry.isCancelled ? 0.55 : 1
+    }
+
+    /// VoiceOver label, so the cancelled state isn't conveyed by dimming alone.
+    static func accessibilityLabel(for entry: ChatSession.UserEntry) -> String {
+        entry.isCancelled ? "\(entry.text). \(cancelledCaption)." : entry.text
+    }
+}
+
+struct UserMessageRow: View {
     let entry: ChatSession.UserEntry
 
     var body: some View {
         HStack {
             Spacer(minLength: 48)
-            Text(entry.text)
-                .font(.body)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
-                .background(.blue.opacity(0.85), in: .rect(cornerRadius: 16, style: .continuous))
-                .foregroundStyle(.white)
-                .textSelection(.enabled)
-                .contextMenu {
-                    Button("Copy") { ChatClipboard.copy(entry.text) }
+            VStack(alignment: .trailing, spacing: 4) {
+                Text(entry.text)
+                    .font(.body)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .background(.blue.opacity(0.85), in: .rect(cornerRadius: 16, style: .continuous))
+                    .foregroundStyle(.white)
+                    .opacity(UserMessagePresentation.bubbleOpacity(for: entry))
+                    .textSelection(.enabled)
+                    .contextMenu {
+                        Button("Copy") { ChatClipboard.copy(entry.text) }
+                    }
+                if let caption = UserMessagePresentation.caption(for: entry) {
+                    Label(caption, systemImage: "xmark.circle")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
                 }
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel(UserMessagePresentation.accessibilityLabel(for: entry))
         }
     }
 }
