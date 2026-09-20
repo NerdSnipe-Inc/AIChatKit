@@ -80,6 +80,20 @@ immediately reusable. If nothing had been produced, the user message stays unans
   → “finished thinking without writing an answer (token limit?)”.
 * The final AI entry text is the raw stream, not what the paced `BalancedEmitter` had displayed.
 
+## Thinking tile
+
+`ThinkingTileView` renders a `.reasoning` entry. This is deliberate behaviour, not a bug:
+
+* `ChatSession` inserts the entry with `isThinking = true`, `isExpanded = false` and appends streamed
+  reasoning deltas to `text`. It never sets `isExpanded` itself; only `toggleThinking(id:)` does.
+* **While thinking:** the pill shows animated dots and "Thinking…". The reasoning text is NOT
+  rendered and taps are ignored (no chevron), so the row is a stable live indicator that does not
+  reflow per token. Even if `isExpanded` were true, content stays hidden until thinking finishes.
+* **When finished** (`isThinking = false`, `duration` set): the pill reads "Thought for Ns", shows the
+  last 50 characters as a preview and a chevron; tapping expands to the full selectable text.
+* Rules are in `ThinkingTilePresentation` (tested in `ThinkingTileViewTests`). Live-expandable
+  streaming reasoning would be a feature change, not a fix.
+
 ## Known limits
 
 * One generation at a time; there is no queue for messages sent while busy.
@@ -87,5 +101,5 @@ immediately reusable. If nothing had been produced, the user message stays unans
   failure).
 * A tool that never gets a result leaves the session in `awaitingToolResults` until the host
   answers, `cancel()`s or `clearHistory()`s.
-* The thinking row is not expandable while the model is still thinking (`ThinkingTileView`).
+* The thinking row is not expandable while the model is still thinking (by design, see "Thinking tile").
 * `GemmaCallSyntax` is duplicated in AIChatUI and AIChatKitMLX (independent releases); keep in sync.
