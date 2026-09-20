@@ -160,7 +160,10 @@ final class ChatErrorTests: XCTestCase {
     func test_httpStatusExtraction() {
         XCTAssertEqual(ChatError.httpStatus(in: "Response error (Status 404): x"), 404)
         XCTAssertEqual(ChatError.httpStatus(in: "status=401"), 401)
+        XCTAssertEqual(ChatError.httpStatus(in: "HubApi.httpStatusCode(404)"), 404)
+        XCTAssertEqual(ChatError.httpStatus(in: "HubApi.httpStatusCode(401)"), 401)
         XCTAssertNil(ChatError.httpStatus(in: "no code here 12"))
+        XCTAssertNil(ChatError.httpStatus(in: "line 404 of the file"), "a bare number is not an HTTP status")
     }
 
     // MARK: Regression: a generic "not found" is not a missing repository
@@ -178,6 +181,16 @@ final class ChatErrorTests: XCTestCase {
     func test_missingLocalFile_onLoad_isLoadFailed() {
         guard case .modelLoadFailed = classify(Opaque(message: "The file config.json does not exist")) else {
             return XCTFail("a missing local file is a load failure, not a bad model id")
+        }
+    }
+
+    /// The Hub's real untyped 404 form (swift-transformers `HubApi`), as seen by `MLXProvider`.
+    func test_realHubApiStatusCode404_onLoad_isModelNotFound() {
+        struct HubStub: Error, CustomStringConvertible { let description: String }
+        for code in [401, 403, 404] {
+            guard case .modelNotFound = classify(HubStub(description: "HubApi.httpStatusCode(\(code))")) else {
+                return XCTFail("httpStatusCode(\(code)) must classify as modelNotFound")
+            }
         }
     }
 }

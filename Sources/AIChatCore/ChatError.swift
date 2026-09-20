@@ -133,7 +133,8 @@ extension ChatError: LocalizedError {
     /// The HTTP status embedded in a Hub/HTTP error description such as
     /// "Response error (Status 404): …", or `nil` when there isn't one.
     static func httpStatus(in text: String) -> Int? {
-        guard let range = text.range(of: #"status[ :=]+(\d{3})"#, options: [.regularExpression, .caseInsensitive]) else { return nil }
+        // Matches "Status 404", "status=401" and the Hub's own "HubApi.httpStatusCode(404)".
+        guard let range = text.range(of: #"status(?: ?code)?[ :=(]+(\d{3})"#, options: [.regularExpression, .caseInsensitive]) else { return nil }
         return Int(text[range].filter(\.isNumber))
     }
 }
