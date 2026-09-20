@@ -294,6 +294,44 @@ final class ChatSessionLifecycleTests: XCTestCase {
         XCTAssertEqual(p.received[1].map(\.role), [.user, .assistant, .tool, .user])
     }
 
+    func test_cancelBeforeAnyOutput_dropsOrphanedUserTurnFromProviderHistory_keepsItVisible() async {
+        let p = ScriptedProvider([[.hang], [.event(.text("B answer"))]])
+        let s = makeSession(p)
+        s.send("A")
+        s.cancel()
+        XCTAssertFalse(s.isGenerating)
+        XCTAssertNil(s.error)
+        let users = s.entries.compactMap { e -> ChatSession.UserEntry? in if case .userMessage(let u) = e { return u } else { return nil } }
+        XCTAssertEqual(users.map(\.text), ["A"])
+        XCTAssertTrue(users[0].isCancelled)
+        s.send("B")
+        await fullyIdle(s)
+        // The provider must see strict alternation: only "B", never [user A, user B].
+        let last = p.received.last!
+        XCTAssertEqual(last.map(\.role), [.user])
+        if case .text(let t)? = last.first?.content.first { XCTAssertEqual(t, "B") } else { XCTFail("expected text block") }
+        XCTAssertEqual(ai(s).map(\.text), ["B answer"])
+    }
+
+    func test_repeatedCancelBeforeOutput_neverAccumulatesUserTurns() async {
+        let p = ScriptedProvider([[.hang], [.hang], [.hang], [.event(.text("done"))]])
+        let s = makeSession(p)
+        for i in 1...3 { s.send("q\(i)"); s.cancel() }
+        s.send("final")
+        await fullyIdle(s)
+        XCTAssertEqual(p.received.last!.map(\.role), [.user])
+        XCTAssertEqual(ai(s).map(\.text), ["done"])
+    }
+
+    func test_cancelBeforeOutput_afterAnsweredTurn_keepsAlternation() async {
+        let p = ScriptedProvider([[.event(.text("one"))], [.hang], [.event(.text("three"))]])
+        let s = makeSession(p)
+        s.send("first"); await fullyIdle(s)
+        s.send("second"); s.cancel()
+        s.send("third"); await fullyIdle(s)
+        XCTAssertEqual(p.received.last!.map(\.role), [.user, .assistant, .user])
+    }
+
     func test_cancelWhenIdle_isNoOp() {
         let s = makeSession(ScriptedProvider([]))
         s.cancel()

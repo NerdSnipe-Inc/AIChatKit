@@ -65,8 +65,20 @@ There is no built-in executor: the host watches for `.toolCall` entries with `.r
 streaming/thinking animations, **keeps** the partial text visible and in history (so roles keep
 alternating), and marks any pending tool call `.failed` with a synthetic “Cancelled by user.”
 result so history never contains a tool call without an answer. `error` is not set. The session is
-immediately reusable. If nothing had been produced, the user message stays unanswered and the next
-`send` produces two consecutive user turns (not exercised against the live model).
+immediately reusable.
+
+**Cancel before any output** (no text, reasoning or tool call yet): the user turn has no reply.
+Before the fix the next `send` gave the provider two consecutive user turns `[user A, user B]`.
+Now the unanswered trailing user turn is **dropped from provider history** and stays in the
+transcript with `UserEntry.isCancelled == true`; the provider sees only `[user B]` (or
+`[…, assistant, user B]`), i.e. strict user/assistant alternation. Why not the alternatives: merging
+A+B makes the model answer a question the user just abandoned; an assistant placeholder injects text
+the model never wrote and can be echoed back. Dropping matches intent (“stop, never mind”), and a
+user who wants A answered simply resends it. Applies only when history ends in a user message, so
+partial-text, tool-call and tool-continuation cancels are unchanged. Errors and empty replies are
+not cancels and keep their user turn (the user may retry). Repeated cancel/resend cycles never
+accumulate turns. Verified with scripted providers (`ChatSessionLifecycleTests`) and live
+(`LiveSessionTests`).
 
 ## Other rules
 

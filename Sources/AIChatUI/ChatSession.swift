@@ -195,6 +195,7 @@ public final class ChatSession: ObservableObject {
         commitAssistantTurn()
         pendingToolResults.removeAll()
         failRunningToolCalls(reason: "Cancelled by user.")
+        discardUnansweredUserTurn()
         removeActivity()
         isGenerating = false
         ChatLog.info(.core, "session cancelled")
@@ -498,6 +499,23 @@ public final class ChatSession: ObservableObject {
         history.append(ChatMessage(role: .assistant, content: blocks, toolCalls: calls.isEmpty ? nil : calls))
     }
 
+    /// Cancelled before the model produced anything: the trailing user turn has no reply. Keeping it
+    /// would make the next request two consecutive user turns, which strict chat templates (Gemma)
+    /// reject or mishandle. The turn is dropped from provider history but stays in the transcript,
+    /// marked `isCancelled`.
+    private func discardUnansweredUserTurn() {
+        guard let last = history.last, last.role == .user else { return }
+        history.removeLast()
+        for i in entries.indices {
+            if case .userMessage(var u) = entries[i], u.id == last.id {
+                u.isCancelled = true
+                entries[i] = .userMessage(u)
+                break
+            }
+        }
+        ChatLog.info(.core, "dropped unanswered user turn from provider history after cancel")
+    }
+
     /// Marks every running tool call failed and records a matching result in history so a
     /// later turn never sees a tool call without an answer.
     private func failRunningToolCalls(reason: String) {
@@ -689,6 +707,9 @@ public extension ChatSession {
         public let id: UUID
         /// User message text.
         public var text: String
+        /// True when the user cancelled before the model produced anything: the message was never
+        /// answered and is not part of the provider history.
+        public var isCancelled: Bool = false
 
         /// Creates a user-message entry.
         ///
