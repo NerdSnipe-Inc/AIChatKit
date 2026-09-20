@@ -50,7 +50,7 @@ extension ChatError: LocalizedError {
         case .cancelled:                      return "Request cancelled"
         case .invalidConfiguration(let msg):  return "Invalid configuration: \(msg)"
         case .modelNotFound(let id):
-            return "The model \"\(id)\" could not be found."
+            return "The model \"\(id)\" could not be found, or you don't have access to it."
         case .modelDownloadFailed(let id, let e):
             return "Downloading the model \"\(id)\" failed: \(Self.brief(e))"
         case .outOfMemory:
@@ -92,7 +92,7 @@ extension ChatError: LocalizedError {
     public var recoverySuggestion: String? {
         switch self {
         case .modelNotFound:
-            return "Check the model id for typos (expected form: \"org/name\") and that the repository is public."
+            return "Check the model id for typos (expected form: \"org/name\"). Private or gated models need a Hugging Face access token."
         case .modelDownloadFailed:
             return "Check your internet connection and free disk space, then try again. Private models need a Hugging Face access token."
         case .outOfMemory:
@@ -122,7 +122,19 @@ extension ChatError: LocalizedError {
 
     private static func brief(_ error: Error) -> String {
         if let chat = error as? ChatError, let d = chat.errorDescription { return d }
+        // `localizedDescription` on a Swift-native error that isn't `LocalizedError` (e.g. the Hub's
+        // `HTTPClientError`) collapses to "The operation couldn't be completed. (… error 1.)" —
+        // useless for debugging. Prefer the type's own readable description when it has one.
+        if error is LocalizedError { return error.localizedDescription }
+        if let described = error as? CustomStringConvertible { return described.description }
         return error.localizedDescription
+    }
+
+    /// The HTTP status embedded in a Hub/HTTP error description such as
+    /// "Response error (Status 404): …", or `nil` when there isn't one.
+    static func httpStatus(in text: String) -> Int? {
+        guard let range = text.range(of: #"status[ :=]+(\d{3})"#, options: [.regularExpression, .caseInsensitive]) else { return nil }
+        return Int(text[range].filter(\.isNumber))
     }
 }
 
@@ -206,6 +218,14 @@ extension ChatError {
         if has("unsupported model type", "unsupportedmodeltype", "unsupported model", "nomodelfactoryavailable",
                "no model factory", "unknown model type", "unsupported architecture") {
             return .unsupportedModel(modelId: modelId, reason: "the installed MLX runtime has no loader for this architecture")
+        }
+        // The Hub answers 401 (not 404) for a repo that doesn't exist when the caller is
+        // unauthenticated, so 401/403/404 are all reported as "not found or no access" rather than
+        // as a connectivity problem. `HTTPClientError` bridges to an opaque NSError, so the status
+        // is recovered from its Swift description.
+        if phase == .load, let status = httpStatus(in: String(describing: error)) ?? httpStatus(in: all),
+           [401, 403, 404].contains(status) {
+            return .modelNotFound(modelId: modelId)
         }
         if let chain = chain.first(where: { $0.domain == NSURLErrorDomain }), phase == .load {
             _ = chain

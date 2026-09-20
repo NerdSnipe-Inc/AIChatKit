@@ -822,6 +822,13 @@ public extension ChatSession {
         public var text: String
         /// Whether the activity represents an error.
         public var isError: Bool = false
+
+        /// Public so a host app (or coordinator) can append its own inline error/status row.
+        public init(id: UUID = UUID(), text: String, isError: Bool = false) {
+            self.id = id
+            self.text = text
+            self.isError = isError
+        }
     }
 }
 

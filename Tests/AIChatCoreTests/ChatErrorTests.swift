@@ -128,4 +128,38 @@ final class ChatErrorTests: XCTestCase {
         XCTAssertTrue(ChatLog.isTruthy("1"))
         XCTAssertFalse(ChatLog.isTruthy("0"))
     }
+
+    // MARK: Hub HTTP errors (regression: nonexistent model read as "check your internet")
+
+    /// Stand-in for `HuggingFace.HTTPClientError`: a Swift-native error that is NOT `LocalizedError`,
+    /// so its `localizedDescription` is the opaque "…(Module.Type error 1.)" text.
+    private enum HubLikeError: Error, CustomStringConvertible {
+        case responseError(status: Int, detail: String)
+        var description: String {
+            switch self { case .responseError(let s, let d): return "Response error (Status \(s)): \(d)" }
+        }
+    }
+
+    func test_hub401And404_onLoad_areModelNotFound_notDownloadFailures() {
+        for status in [401, 403, 404] {
+            guard case .modelNotFound(let id) = classify(HubLikeError.responseError(status: status, detail: "Repository not found")) else {
+                return XCTFail("status \(status) should classify as modelNotFound")
+            }
+            XCTAssertEqual(id, "org/model")
+        }
+    }
+
+    func test_hub500_onLoad_isDownloadFailed_withReadableDetail() {
+        let error = classify(HubLikeError.responseError(status: 500, detail: "upstream boom"))
+        // 500 isn't in the not-found set, so it must not be mislabelled as one.
+        if case .modelNotFound = error { return XCTFail("500 must not be modelNotFound") }
+        XCTAssertTrue(error.errorDescription?.contains("Status 500") == true || error.debugDescription.contains("Status 500"),
+                      "readable status must survive into the message: \(error.debugDescription)")
+    }
+
+    func test_httpStatusExtraction() {
+        XCTAssertEqual(ChatError.httpStatus(in: "Response error (Status 404): x"), 404)
+        XCTAssertEqual(ChatError.httpStatus(in: "status=401"), 401)
+        XCTAssertNil(ChatError.httpStatus(in: "no code here 12"))
+    }
 }
