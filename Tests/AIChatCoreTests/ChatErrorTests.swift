@@ -162,4 +162,22 @@ final class ChatErrorTests: XCTestCase {
         XCTAssertEqual(ChatError.httpStatus(in: "status=401"), 401)
         XCTAssertNil(ChatError.httpStatus(in: "no code here 12"))
     }
+
+    // MARK: Regression: a generic "not found" is not a missing repository
+
+    func test_weightKeyNotFound_onLoad_isLoadFailed_andKeepsTheCause() {
+        let cause = Opaque(message: "Key language_model.model.layers.0.self_attn.q_proj.weight not found in model weights")
+        guard case .modelLoadFailed(let id, let underlying) = classify(cause) else {
+            return XCTFail("a weight/key mismatch must not be reported as a missing repository")
+        }
+        XCTAssertEqual(id, "org/model")
+        XCTAssertTrue(underlying.localizedDescription.contains("q_proj.weight not found"),
+                      "the real cause must survive into the error")
+    }
+
+    func test_missingLocalFile_onLoad_isLoadFailed() {
+        guard case .modelLoadFailed = classify(Opaque(message: "The file config.json does not exist")) else {
+            return XCTFail("a missing local file is a load failure, not a bad model id")
+        }
+    }
 }

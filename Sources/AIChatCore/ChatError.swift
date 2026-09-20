@@ -231,7 +231,11 @@ extension ChatError {
             _ = chain
             return .modelDownloadFailed(modelId: modelId, underlying: error)
         }
-        if has("404", "not found", "repository not found", "repo not found", "does not exist", "invalid repository", "revision not found") {
+        // Only real Hub "no such repo" signals map here. A bare "not found" / "does not exist" is far
+        // too broad — e.g. "weight key X not found" or a missing local file is a load failure whose
+        // cause must be kept (`.modelNotFound` carries no underlying error, so misfiling those
+        // silently discards the real reason).
+        if has("repository not found", "repo not found", "revision not found", "invalid repository", "http 404") {
             // A missing local file during load means damaged/missing weights, not a bad id.
             if phase == .load, ns.domain == NSCocoaErrorDomain, ns.code == NSFileReadNoSuchFileError || ns.code == NSFileNoSuchFileError {
                 return .modelLoadFailed(modelId: modelId, underlying: error)
