@@ -234,12 +234,11 @@ session.submitToolResult(toolCallId: entry.id, content: resultString)
 
 ---
 
-## Known limits
+## Upgrade notes
 
+- **2.0.0 removed the Gemma text-parsing API.** `GemmaOutputRecovery`, `GemmaToolArguments` and `EmbeddedToolCallParser` are gone, and `ChatSession` no longer parses tool calls out of assistant text. A provider now turns model-specific text calls into `.toolCallComplete` events itself; AIChatKitMLX 1.4.0+ does this for Gemma (`call:`, `<tool_call>` XML, `tool_code`). Other providers are unaffected. `UserEntry.isFailed` is new.
 - **`ChatError` grew in 1.1.0.** The local-model cases (`modelNotFound`, `modelDownloadFailed`, `outOfMemory`, `modelLoadFailed`, `unsupportedModel`, `templateError`, `toolCallParseFailed`, `generationFailed`) were added, so an exhaustive `switch` over `ChatError` needs a `default:`. `ChatSession.send` now returns a `Bool` (`@discardableResult`; `false` when the text is empty or the session is busy).
-- **Consecutive user turns after an error.** A turn that ends in an error or an empty reply keeps its user message in provider history (the user may retry), so the next `send` can put two user messages in a row. A cancel before any output is different: that unanswered user turn is dropped from provider history and marked `UserEntry.isCancelled`.
-- **Gemma call parsing is duplicated.** `GemmaCallSyntax.swift` exists in both `AIChatUI` and AIChatKitMLX (`AIChatMLX`) so the packages release independently. Keep the two copies in sync.
-- **The thinking tile is not expandable while the model is still thinking.** This is deliberate; it expands once thinking finishes.
+- **Unanswered turns are not resent.** A turn cancelled, failed, or answered with nothing before any output is dropped from provider history and marked `UserEntry.isCancelled` / `UserEntry.isFailed`, so the provider always sees strict user/assistant alternation. It stays in the transcript; resend it to retry.
 
 Details: [docs/CHAT_SESSION_BEHAVIOUR.md](docs/CHAT_SESSION_BEHAVIOUR.md).
 

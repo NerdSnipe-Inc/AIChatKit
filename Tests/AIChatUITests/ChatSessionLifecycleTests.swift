@@ -240,21 +240,27 @@ final class ChatSessionLifecycleTests: XCTestCase {
         XCTAssertEqual(p.received[1][1].toolCalls?.first?.arguments, "{}")
     }
 
-    func test_embeddedToolCallInText_isRecoveredIntoOneAssistantTurn() async {
-        let p = ScriptedProvider([
-            [.event(.text(#"Sure. <tool_call>{"name":"lookup","arguments":{"q":"x"}}</tool_call>"#))],
-            [.event(.text("done"))],
-        ])
+    /// Parsing model-specific text tool-call syntax is the provider's job (e.g. AIChatKitMLX). The
+    /// session shows what the provider streamed and never rewrites it.
+    func test_toolCallSyntaxInText_isNotInterpretedBySession() async {
+        let text = #"Sure. <tool_call>{"name":"lookup","arguments":{"q":"x"}}</tool_call>"#
+        let p = ScriptedProvider([[.event(.text(text))]])
+        let s = makeSession(p)
+        s.send("go")
+        await fullyIdle(s)
+        XCTAssertTrue(tools(s).isEmpty)
+        XCTAssertEqual(ai(s).first?.text, text)
+    }
+
+    func test_emptyToolArguments_meanEmptyObject() async {
+        let p = ScriptedProvider([[.event(.toolCallComplete(id: "a", name: "ping", arguments: ""))], [.event(.text("ok"))]])
         let s = makeSession(p)
         s.send("go")
         await wait(s) { s.isAwaitingToolResults }
-        XCTAssertEqual(tools(s).first?.name, "lookup")
-        XCTAssertEqual(ai(s).first?.text, "Sure.")
-        s.submitToolResult(toolCallId: tools(s)[0].id, content: "r")
+        XCTAssertEqual(tools(s).first?.arguments, "{}")
+        s.submitToolResult(toolCallId: "a", content: "pong")
         await fullyIdle(s)
-        let a = p.received[1][1]
-        XCTAssertEqual(a.role, .assistant)
-        XCTAssertEqual(a.toolCalls?.first?.name, "lookup")
+        XCTAssertEqual(p.received[1][1].toolCalls?.first?.arguments, "{}")
     }
 
     // MARK: cancel / clear
@@ -329,6 +335,44 @@ final class ChatSessionLifecycleTests: XCTestCase {
         s.send("first"); await fullyIdle(s)
         s.send("second"); s.cancel()
         s.send("third"); await fullyIdle(s)
+        XCTAssertEqual(p.received.last!.map(\.role), [.user, .assistant, .user])
+    }
+
+    func test_errorBeforeAnyOutput_thenResend_neverSendsTwoConsecutiveUserTurns() async {
+        let p = ScriptedProvider([[.fail(ChatError.streamError("bad"))], [.event(.text("B answer"))]])
+        let s = makeSession(p)
+        s.send("A"); await fullyIdle(s)
+        XCTAssertNotNil(s.error)
+        let users = s.entries.compactMap { e -> ChatSession.UserEntry? in if case .userMessage(let u) = e { return u } else { return nil } }
+        XCTAssertTrue(users[0].isFailed)
+        XCTAssertFalse(users[0].isCancelled)
+        s.send("B"); await fullyIdle(s)
+        XCTAssertEqual(p.received.last!.map(\.role), [.user])
+        XCTAssertEqual(ai(s).map(\.text), ["B answer"])
+    }
+
+    func test_emptyReply_thenResend_neverSendsTwoConsecutiveUserTurns() async {
+        let p = ScriptedProvider([[], [.event(.text("ok"))]])
+        let s = makeSession(p)
+        s.send("A"); await fullyIdle(s)
+        s.send("B"); await fullyIdle(s)
+        XCTAssertEqual(p.received.last!.map(\.role), [.user])
+    }
+
+    func test_errorAfterAnsweredTurn_keepsAlternation() async {
+        let p = ScriptedProvider([[.event(.text("one"))], [.fail(ChatError.streamError("bad"))], [.event(.text("three"))]])
+        let s = makeSession(p)
+        s.send("first"); await fullyIdle(s)
+        s.send("second"); await fullyIdle(s)
+        s.send("third"); await fullyIdle(s)
+        XCTAssertEqual(p.received.last!.map(\.role), [.user, .assistant, .user])
+    }
+
+    func test_errorMidStream_keepsUserTurnBecausePartialReplyIsCommitted() async {
+        let p = ScriptedProvider([[.event(.text("partial")), .fail(ChatError.streamError("bad"))], [.event(.text("more"))]])
+        let s = makeSession(p)
+        s.send("A"); await fullyIdle(s)
+        s.send("B"); await fullyIdle(s)
         XCTAssertEqual(p.received.last!.map(\.role), [.user, .assistant, .user])
     }
 

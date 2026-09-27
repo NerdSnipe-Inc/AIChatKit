@@ -87,19 +87,23 @@ enum UserMessagePresentation {
     /// caption says what the user actually needs to know: the model won't see it.
     static let cancelledCaption = "Cancelled — the model won't see this message"
 
+    /// Shown under a message whose turn failed (error or empty reply) before any output. Dropped
+    /// from provider history the same way as a cancelled turn.
+    static let failedCaption = "Not answered — the model won't see this message"
+
     /// Caption under the bubble, or `nil` for a normal message.
     static func caption(for entry: ChatSession.UserEntry) -> String? {
-        entry.isCancelled ? cancelledCaption : nil
+        entry.isCancelled ? cancelledCaption : entry.isFailed ? failedCaption : nil
     }
 
     /// Bubble opacity: a cancelled message is dimmed so it reads as abandoned.
     static func bubbleOpacity(for entry: ChatSession.UserEntry) -> Double {
-        entry.isCancelled ? 0.55 : 1
+        (entry.isCancelled || entry.isFailed) ? 0.55 : 1
     }
 
     /// VoiceOver label, so the cancelled state isn't conveyed by dimming alone.
     static func accessibilityLabel(for entry: ChatSession.UserEntry) -> String {
-        entry.isCancelled ? "\(entry.text). \(cancelledCaption)." : entry.text
+        caption(for: entry).map { "\(entry.text). \($0)." } ?? entry.text
     }
 }
 

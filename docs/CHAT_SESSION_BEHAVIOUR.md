@@ -14,7 +14,7 @@
 | `.activity("Thinking…")` | generation starts | removed at first content / finish / cancel |
 | `.reasoning` | first `.reasoning` event (inserted before the AI row) | `isThinking = false`, `duration` set |
 | `.aiMessage` | first `.text` event | `isStreaming = false`, text = full raw stream |
-| `.toolCall` | `.toolCallComplete`, recovered embedded call, `requestToolCall` | `.running` → `.succeeded` / `.failed` |
+| `.toolCall` | `.toolCallComplete`, `requestToolCall` | `.running` → `.succeeded` / `.failed` |
 | `.activity(isError: true)` | error, no response, reasoning-only, redacted thinking | permanent inline notice |
 
 Invariant when the session is idle (`isGenerating == false`): no `.aiMessage` is streaming, no
@@ -53,9 +53,9 @@ There is no built-in executor: the host watches for `.toolCall` entries with `.r
   (`ChatSessionError.unknownToolCall`). Empty content is replaced by a placeholder (some
   templates drop empty tool messages).
 * `isError: true` marks the row `.failed`; the model still gets the text and can explain.
-* Tool calls the model wrote as text (`call:name{…}`, `<tool_call>{json}</tool_call>`,
-  ```` ```tool_code ````) are recovered at the end of the stream and behave like native ones.
-  Prose that merely contains `call:` (“give me a call: 555…”, `recall:{…}`) is left alone.
+* `ChatSession` does not parse tool calls out of text. A provider that talks to a model which writes calls as
+  text (Gemma's `call:name{…}`, `<tool_call>` XML, ```` ```tool_code ````) turns them into `.toolCallComplete`
+  events itself; AIChatKitMLX does this for Gemma. Text the provider streams as text is shown as text.
 * Arguments that are not a JSON object are shown raw in the row but sent to the provider as `{}`.
 * `requestToolCall` (host-planned call) is only allowed when idle.
 
@@ -75,8 +75,10 @@ transcript with `UserEntry.isCancelled == true`; the provider sees only `[user B
 A+B makes the model answer a question the user just abandoned; an assistant placeholder injects text
 the model never wrote and can be echoed back. Dropping matches intent (“stop, never mind”), and a
 user who wants A answered simply resends it. Applies only when history ends in a user message, so
-partial-text, tool-call and tool-continuation cancels are unchanged. Errors and empty replies are
-not cancels and keep their user turn (the user may retry). Repeated cancel/resend cycles never
+partial-text, tool-call and tool-continuation cancels are unchanged. Errors and empty replies
+that produce no output are handled the same way (`UserEntry.isFailed`, caption “Not answered — the
+model won't see this message”); an error *after* partial output keeps its user turn because the
+partial reply is committed. Repeated cancel/failure/resend cycles never
 accumulate turns. Verified with scripted providers (`ChatSessionLifecycleTests`) and live
 (`LiveSessionTests`).
 
@@ -118,4 +120,9 @@ tested in `UserMessageRowTests`). Hosts that draw their own rows can read `UserE
 * A tool that never gets a result leaves the session in `awaitingToolResults` until the host
   answers, `cancel()`s or `clearHistory()`s.
 * The thinking row is not expandable while the model is still thinking (by design, see "Thinking tile").
-* `GemmaCallSyntax` is duplicated in AIChatUI and AIChatKitMLX (independent releases); keep in sync.
+
+## Thinking tile
+
+While the model is still thinking the tile is a non-interactive indicator (the reasoning text is not
+rendered and taps are ignored, so the row never reflows). It becomes expandable once thinking
+finishes. This is deliberate; see `ThinkingTileView`.

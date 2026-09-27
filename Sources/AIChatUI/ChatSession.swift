@@ -131,13 +131,14 @@ public final class ChatSession: ObservableObject {
     ///
     /// - Parameters:
     ///   - name: Tool/function name.
-    ///   - arguments: JSON-like argument payload to normalize and store.
+    ///   - arguments: JSON object payload. Anything that is not a JSON object is shown as given but
+    ///     sent to the provider as `{}`.
     public func requestToolCall(name: String, arguments: String) {
         guard !isGenerating else { return }
         let id = UUID().uuidString
-        let normalized = GemmaToolArguments.normalize(arguments)
-        addToolCallEntry(id: id, name: name, arguments: normalized)
-        appendAssistantToolCall(id: id, name: name, arguments: historyArguments(normalized))
+        let arguments = Self.trimmedArguments(arguments)
+        addToolCallEntry(id: id, name: name, arguments: arguments)
+        appendAssistantToolCall(id: id, name: name, arguments: historyArguments(arguments))
     }
 
     /// `true` when the model has finished streaming and one or more tool calls are waiting
@@ -195,7 +196,7 @@ public final class ChatSession: ObservableObject {
         commitAssistantTurn()
         pendingToolResults.removeAll()
         failRunningToolCalls(reason: "Cancelled by user.")
-        discardUnansweredUserTurn()
+        discardUnansweredUserTurn(failed: false)
         removeActivity()
         isGenerating = false
         ChatLog.info(.core, "session cancelled")
@@ -363,9 +364,9 @@ public final class ChatSession: ObservableObject {
 
         case .toolCallComplete(let id, let name, let args):
             removeActivity()
-            let normalized = GemmaToolArguments.normalize(args)
-            addToolCallEntry(id: id, name: name, arguments: normalized)
-            pendingToolCalls.append(.init(id: id, name: name, arguments: historyArguments(normalized)))
+            let args = Self.trimmedArguments(args)
+            addToolCallEntry(id: id, name: name, arguments: args)
+            pendingToolCalls.append(.init(id: id, name: name, arguments: historyArguments(args)))
 
         case .usage:
             break
@@ -393,8 +394,6 @@ public final class ChatSession: ObservableObject {
         textEmitter = nil
 
         finaliseStreamedEntries()
-        // Recover tool calls the model wrote as <tool_call> text (LoRA / training artifact).
-        if let aid = activeAIId { recoverEmbeddedToolCalls(fromAIEntryId: aid) }
         removeActivity()
 
         let hasText = !rawTextCleaned.isEmpty
@@ -408,6 +407,10 @@ public final class ChatSession: ObservableObject {
         }
 
         commitAssistantTurn()
+
+        // An error or empty reply with no output leaves the user turn unanswered. Keeping it would
+        // make the retry two consecutive user turns (strict templates such as Gemma reject that).
+        if error != nil || (!hasText && !hasToolCalls) { discardUnansweredUserTurn(failed: true) }
 
         if let err = error {
             let msg = (err as? LocalizedError)?.errorDescription ?? err.localizedDescription
@@ -502,18 +505,18 @@ public final class ChatSession: ObservableObject {
     /// Cancelled before the model produced anything: the trailing user turn has no reply. Keeping it
     /// would make the next request two consecutive user turns, which strict chat templates (Gemma)
     /// reject or mishandle. The turn is dropped from provider history but stays in the transcript,
-    /// marked `isCancelled`.
-    private func discardUnansweredUserTurn() {
+    /// marked `isCancelled` (or `isFailed` when the turn ended in an error or an empty reply).
+    private func discardUnansweredUserTurn(failed: Bool) {
         guard let last = history.last, last.role == .user else { return }
         history.removeLast()
         for i in entries.indices {
             if case .userMessage(var u) = entries[i], u.id == last.id {
-                u.isCancelled = true
+                if failed { u.isFailed = true } else { u.isCancelled = true }
                 entries[i] = .userMessage(u)
                 break
             }
         }
-        ChatLog.info(.core, "dropped unanswered user turn from provider history after cancel")
+        ChatLog.info(.core, "dropped unanswered user turn from provider history (\(failed ? "failed" : "cancelled"))")
     }
 
     /// Marks every running tool call failed and records a matching result in history so a
@@ -527,34 +530,6 @@ public final class ChatSession: ObservableObject {
                 history.append(ChatMessage(toolCallId: e.id, content: reason))
             }
         }
-    }
-
-    @discardableResult
-    private func recoverEmbeddedToolCalls(fromAIEntryId id: UUID) -> Bool {
-        guard let idx = entries.indices.first(where: {
-            if case .aiMessage(let e) = entries[$0], e.id == id { return true } else { return false }
-        }), case .aiMessage(var e) = entries[idx] else { return false }
-
-        let parsed = GemmaOutputRecovery.parse(from: e.text, toolSchemas: options.nativeToolSpecs)
-        guard !parsed.calls.isEmpty else { return false }
-
-        e.text = parsed.cleanedText
-        e.isStreaming = false
-        rawText = parsed.cleanedText
-        if e.text.isEmpty {
-            entries.remove(at: idx)
-            activeAIId = nil
-        } else {
-            entries[idx] = .aiMessage(e)
-        }
-
-        for call in parsed.calls {
-            let toolId = UUID().uuidString
-            let normalized = GemmaToolArguments.normalize(call.arguments)
-            addToolCallEntry(id: toolId, name: call.name, arguments: normalized)
-            pendingToolCalls.append(.init(id: toolId, name: call.name, arguments: historyArguments(normalized)))
-        }
-        return true
     }
 
     private func ensureAIEntry() {
@@ -647,6 +622,12 @@ public final class ChatSession: ObservableObject {
 
     /// Provider-facing arguments must be a JSON object (OpenAI/Anthropic reject anything else, and
     /// MLX silently drops the whole call). The entry keeps the raw text for display/debugging.
+    /// Providers may send empty arguments for a parameterless tool; that means `{}`.
+    private static func trimmedArguments(_ raw: String) -> String {
+        let t = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        return t.isEmpty ? "{}" : t
+    }
+
     private func historyArguments(_ normalized: String) -> String {
         if let d = normalized.data(using: .utf8), (try? JSONSerialization.jsonObject(with: d)) is [String: Any] {
             return normalized
@@ -710,6 +691,9 @@ public extension ChatSession {
         /// True when the user cancelled before the model produced anything: the message was never
         /// answered and is not part of the provider history.
         public var isCancelled: Bool = false
+        /// True when the turn ended in an error or an empty reply before the model produced anything:
+        /// like a cancelled turn, it is not part of the provider history. Resend it to retry.
+        public var isFailed: Bool = false
 
         /// Creates a user-message entry.
         ///

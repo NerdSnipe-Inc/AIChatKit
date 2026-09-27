@@ -18,6 +18,14 @@ final class UserMessageRowTests: XCTestCase {
         XCTAssertEqual(UserMessagePresentation.accessibilityLabel(for: e), "hello")
     }
 
+    func test_failedMessage_isCaptioned_dimmed_andSpokenAsNotAnswered() {
+        var e = entry()
+        e.isFailed = true
+        XCTAssertEqual(UserMessagePresentation.caption(for: e), UserMessagePresentation.failedCaption)
+        XCTAssertLessThan(UserMessagePresentation.bubbleOpacity(for: e), 1)
+        XCTAssertTrue(UserMessagePresentation.accessibilityLabel(for: e).contains("Not answered"))
+    }
+
     func test_cancelledMessage_isCaptioned_dimmed_andSpokenAsCancelled() {
         let e = entry("hello", cancelled: true)
         XCTAssertEqual(UserMessagePresentation.caption(for: e), UserMessagePresentation.cancelledCaption)
