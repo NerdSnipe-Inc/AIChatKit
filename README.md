@@ -15,8 +15,13 @@ A Swift package that gives every app a single, unified chat interface across clo
 
 For on-device inference, add a companion package:
 - **[AIChatKitMLX](https://github.com/NerdSnipe-Inc/AIChatKitMLX)** — Apple MLX models (Apple Silicon only, text + vision)
+- **[AIChatKitLlama](https://github.com/NerdSnipe-Inc/AIChatKitLlama)** — any GGUF model via llama.cpp, in-process on Metal
 
 ---
+
+[![Sponsor NerdSnipe-Inc](https://img.shields.io/badge/Sponsor-NerdSnipe--Inc-ea4aaa?logo=githubsponsors&logoColor=white)](https://github.com/sponsors/NerdSnipe-Inc)
+
+> AIChatKit is free and open source. If it saved you time, [sponsoring NerdSnipe Inc](https://github.com/sponsors/NerdSnipe-Inc) pays for the maintenance, bug fixes and new releases that keep it working.
 
 ## Products
 
@@ -34,7 +39,7 @@ For on-device inference, add a companion package:
 
 ```swift
 // Package.swift
-.package(url: "https://github.com/NerdSnipe-Inc/AIChatKit", from: "0.1.0")
+.package(url: "https://github.com/NerdSnipe-Inc/AIChatKit", from: "2.0.0")
 
 // Target dependencies — add only what you need
 .product(name: "AIChatCore",             package: "AIChatKit"),
@@ -247,3 +252,10 @@ Details: [docs/CHAT_SESSION_BEHAVIOUR.md](docs/CHAT_SESSION_BEHAVIOUR.md).
 ## License
 
 MIT
+
+## Support this project
+
+AIChatKit is built and maintained by [NerdSnipe Inc](https://nerdsnipe.cc), a small independent studio in Ottawa. Sponsorship funds keeping up with Apple, OpenAI and Anthropic API changes.
+
+- [Sponsor on GitHub](https://github.com/sponsors/NerdSnipe-Inc), from $5/month or a one-time amount
+- [More about what we fund](https://nerdsnipe.cc/sponsor)
